@@ -1,0 +1,208 @@
+# ==================================================
+# 1. Dependency Management & Build Artifacts
+# ==================================================
+
+# ------------------
+# Node.js dependencies
+# ------------------
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# ------------------
+# Python dependencies & virtual environments
+# ------------------
+.venv/
+venv/
+ENV/
+env/
+
+# Python bytecode / cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Python packaging
+*.egg-info/
+dist/
+build/
+
+# ------------------
+# Learned rules (machine learning data)
+# ------------------
+learned_rules.json
+
+# ==================================================
+# 2. Runtime, Cache & Temporary Files
+# ==================================================
+
+# Logs
+*.log
+
+# Cache folders
+.cache/
+.pytest_cache/
+.mypy_cache/
+ruff_cache/
+.npm-cache/
+
+# Temporary files
+*.tmp
+*.temp
+*.swp
+*.swo
+
+# ==================================================
+# 3. Environment Variables & Sensitive Config
+# ==================================================
+
+# Environment variable files
+.env
+.env.*
+
+# Learned barcode patterns (user-specific, don't commit)
+learned_barcode_patterns.json
+backend/learned_barcode_patterns.json
+backend/invoice_extraction_patterns.json
+invoice_extraction_patterns.json
+
+# Local configuration overrides
+config/local_config.*
+config/*.local.*
+
+# API keys / secrets
+secrets.*
+*.key
+*.pem
+*.crt
+certs/server.*
+
+# ==================================================
+# 4. Databases & Local Data Files
+# ==================================================
+
+# SQLite databases
+*.sqlite
+*.sqlite3
+*.db
+
+# Database dumps
+*.sql
+*.dump
+
+# Uploaded files / local storage
+uploads/
+storage/
+media/
+
+# ==================================================
+# 4.5. Docker Data & Artifacts
+# ==================================================
+
+# PostgreSQL data directory (Docker volume)
+postgres_data/
+
+# Docker build logs
+docker_build*.log
+backend_logs.txt
+
+# Nginx & Tailscale Logs
+logs/
+tailscale_state/
+
+# Automated Backups
+backups/
+
+# Docker local overrides
+docker-compose.override.yml
+
+# ==================================================
+# 5. Frontend Build Output
+# ==================================================
+
+# React / Vite / Next build outputs
+dist/
+build/
+.out/
+.next/
+
+# ==================================================
+# 6. Backend Framework Artifacts
+# ==================================================
+
+# FastAPI / Uvicorn
+uvicorn.log
+
+# Django (if applicable)
+*.pot
+*.pyc
+db.sqlite3
+staticfiles/
+
+# ==================================================
+# 7. Testing & Coverage
+# ==================================================
+
+# Test coverage
+coverage/
+htmlcov/
+.coverage
+.coverage.*
+
+# Jest / Vitest
+coverage/
+*.lcov
+
+# ==================================================
+# 8. Editor / IDE Settings
+# ==================================================
+
+# VS Code
+.vscode/
+!.vscode/extensions.json
+
+# IntelliJ / PyCharm
+.idea/
+
+# Vim
+*.swp
+
+# ==================================================
+# 9. OS Generated Files
+# ==================================================
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Windows
+Thumbs.db
+ehthumbs.db
+
+# Linux
+*~
+
+# ==================================================
+# 10. Design & Tooling (Optional)
+# ==================================================
+
+# Figma Dev Mode / exports
+.figmaexportrc
+
+# Postman
+postman/
+*.postman_collection.json
+
+# ==================================================
+# 11. Git & CI Artifacts
+# ==================================================
+
+# Git merge backups
+*.orig
+
+# CI/CD local files
+.github/local/

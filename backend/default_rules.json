@@ -1,0 +1,169 @@
+{
+  "version": "1.0",
+  "updated_at": "2026-02-02T15:55:04.069201",
+  "layouts": {
+    "c867875c209b86e9": {
+      "supplier_name": "Alcon",
+      "fingerprint": "c867875c209b86e9",
+      "text_markers": [
+        "OASIS SURGICAL LIMITED",
+        "Alcon Laboratories (New Zealand) Ltd 1050 REMUERA Payment terms",
+        "Alcon Laboratories (New Zealand) Ltd 1050 REMUERA Payment terms",
+        "Alcon SO 1120691308 Delv No / Desp date / Branch/Plt 1639110472 / 20.08.2025 / Auckland",
+        "REMUERA",
+        "2 MACMURRAY ROAD 19.08.2025 9140481167",
+        "Level 4 The Blade NEW ZEALAND",
+        "Due 30th of month follow 30 D",
+        "12 St Marks Road Remuera"
+      ],
+      "created_at": "2026-02-02T15:50:04.977539",
+      "last_updated": "2026-02-02T15:50:04.977539",
+      "example_count": 1,
+      "invoice_number_rules": [
+        {
+          "field_type": "invoice_number",
+          "value_pattern": "\\b(914\\d{7})\\b",
+          "prefix_context": "19.08.2025",
+          "suffix_context": "Alcon",
+          "strip_leading_zeros": false,
+          "created_at": "2026-02-02T15:50:04.980700",
+          "match_count": 1
+        }
+      ],
+      "serial_number_rules": [
+        {
+          "field_type": "serial_number",
+          "value_pattern": "\\b(\\d{18})\\b",
+          "prefix_context": "Date",
+          "suffix_context": "/",
+          "strip_leading_zeros": true,
+          "created_at": "2026-02-02T15:50:04.981942",
+          "match_count": 1
+        }
+      ]
+    },
+    "a15f58e297cbd7cf": {
+      "supplier_name": "DeviceTechnologies",
+      "fingerprint": "a15f58e297cbd7cf",
+      "text_markers": [
+        "Device Technologies New Zealand Ltd",
+        "47 Arrenway Drive Albany 0632, Auckland, New Zealand",
+        "P.O. Box 302-413, North Harbour Post Centre, 0751 Auckland NZ",
+        "customers@device.co.nz www.device.co.nz",
+        "800742933",
+        "OASIS SURGICAL OASIS SURGICAL"
+      ],
+      "created_at": "2026-02-02T15:51:15.165093",
+      "last_updated": "2026-02-02T15:51:15.165093",
+      "example_count": 1,
+      "invoice_number_rules": [
+        {
+          "field_type": "invoice_number",
+          "value_pattern": "\\b(\\d{8})\\b",
+          "prefix_context": "Number",
+          "suffix_context": "Payee",
+          "strip_leading_zeros": false,
+          "created_at": "2026-02-02T15:51:15.166967",
+          "match_count": 1
+        }
+      ],
+      "serial_number_rules": [
+        {
+          "field_type": "serial_number",
+          "value_pattern": "\\b([A-Z]\\d{7})\\b",
+          "prefix_context": "NO:",
+          "suffix_context": "GST:",
+          "strip_leading_zeros": false,
+          "created_at": "2026-02-02T15:51:15.167045",
+          "match_count": 2
+        }
+      ]
+    },
+    "0a933ede403f8707": {
+      "supplier_name": "SurgiVision",
+      "fingerprint": "0a933ede403f8707",
+      "text_markers": [
+        "Oasis Surgical Limited TAX INVOICE",
+        "Oasis Surgical Limited",
+        "2 MacMurray Road",
+        "Remuera Auckland 1050",
+        "NEW ZEALAND Customer Ref Implant 300425",
+        "ABN: 12 636 303 814",
+        "Delivery Instruction"
+      ],
+      "created_at": "2026-02-02T15:53:56.364089",
+      "last_updated": "2026-02-02T15:53:56.364089",
+      "example_count": 1,
+      "invoice_number_rules": [
+        {
+          "field_type": "invoice_number",
+          "value_pattern": "(SI-\\d+)",
+          "prefix_context": "Number",
+          "suffix_context": "Remuera",
+          "strip_leading_zeros": false,
+          "created_at": "2026-02-02T15:53:56.366370",
+          "match_count": 1
+        }
+      ],
+      "serial_number_rules": [
+        {
+          "field_type": "serial_number",
+          "value_pattern": "\\b(\\d{6}[A-Z]{2}\\d{3}[A-Z]\\d{3}[A-Z]{2})\\b",
+          "prefix_context": "Serial",
+          "suffix_context": "Accuject",
+          "strip_leading_zeros": false,
+          "created_at": "2026-02-02T15:53:56.366515",
+          "match_count": 1
+        }
+      ]
+    },
+    "53164f2e25476a3a": {
+      "supplier_name": "Toomac",
+      "fingerprint": "53164f2e25476a3a",
+      "text_markers": [
+        "Email : sales@toomac.co.nz",
+        "www.toomac.co.nz",
+        "Oasis Surgical Limited Oasis Surgical Limited Date 20/08/2025",
+        "Enquiries can be emailed to sales@toomac.co.nz",
+        "Payment can be made by Direct Credit to our BNZ Bank Account: damaged goods and/or shortages must be reported to Toomac Holdings TOTAL NZD 684.25",
+        "Newmarket Remuera Customer Order No SW 1108",
+        "Reference LN",
+        "MDISP60VL+105 MD Tech Carlevale IOL Hi-Tech 10.5D 1 1 595.00 595.00"
+      ],
+      "created_at": "2026-02-02T15:54:45.052681",
+      "last_updated": "2026-02-02T15:55:04.067839",
+      "example_count": 2,
+      "invoice_number_rules": [
+        {
+          "field_type": "invoice_number",
+          "value_pattern": "(\\d{6}-\\d{2})",
+          "prefix_context": "INVOICE",
+          "suffix_context": "Oasis",
+          "strip_leading_zeros": false,
+          "created_at": "2026-02-02T15:55:04.068567",
+          "match_count": 1
+        }
+      ],
+      "serial_number_rules": [
+        {
+          "field_type": "serial_number",
+          "value_pattern": "\\b(\\d[A-Z]\\d{8})\\b",
+          "prefix_context": "358.00",
+          "suffix_context": "1",
+          "strip_leading_zeros": false,
+          "created_at": "2026-02-02T15:54:45.054012",
+          "match_count": 1
+        },
+        {
+          "field_type": "serial_number",
+          "value_pattern": "([A-Z0-9]{10}-[A-Z0-9]+)",
+          "prefix_context": "595.00",
+          "suffix_context": "1",
+          "strip_leading_zeros": false,
+          "created_at": "2026-02-02T15:55:04.068652",
+          "match_count": 1
+        }
+      ]
+    }
+  }
+}

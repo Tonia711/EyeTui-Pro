@@ -1,0 +1,26 @@
+[run]
+branch = True
+source =
+    app
+omit =
+    app/main.py
+
+[report]
+show_missing = True
+skip_empty = True
+include =
+    app/barcode_learner.py
+    app/barcode_parser.py
+    app/database.py
+    app/excel_processor.py
+    app/invoice_extractor.py
+    app/invoice_learner.py
+    app/lib_path_helper.py
+    app/models.py
+    app/ocr_processor.py
+    app/schemas.py
+omit =
+    tests/*
+    */__pycache__/*
+
+

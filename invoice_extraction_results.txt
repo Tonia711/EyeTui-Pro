@@ -1,0 +1,217 @@
+INVOICE EXTRACTION TEST RESULTS
+====================================================================================================
+
+File: AMO Invoice 1032748883 ( sd 25.06.25 Dr Cho ).pdf
+  Supplier Name: AMO
+  Invoice Number: 1032748883
+  Serial Numbers: ['8033502322', '4159342333', '2317362348', '4088512245', '3213732427']
+----------------------------------------------------------------------------------------------------
+File: AMO Invoice 1032750208 ( sd 27.08.25 Dr Pen ).pdf
+  Supplier Name: AMO
+  Invoice Number: 1032750208
+  Serial Numbers: ['3284142442', '2446902419', '3062982312', '3160622445', '2086302513', '2804842514', '2684972449']
+----------------------------------------------------------------------------------------------------
+File: AMO Invoice 1032750209 ( sd 27.08.25 Dr Car ).pdf
+  Supplier Name: AMO
+  Invoice Number: 1032750209
+  Serial Numbers: ['3287682302', '2221302426', '3396232521', '3477742228']
+----------------------------------------------------------------------------------------------------
+File: Alcon_9140481167.pdf
+  Supplier Name: Alcon
+  Invoice Number: 9140481167
+  Serial Numbers: ['000000025424111139']
+----------------------------------------------------------------------------------------------------
+File: Alcon_9140482151.pdf
+  Supplier Name: Alcon
+  Invoice Number: 9140482151
+  Serial Numbers: ['000000025579955045']
+----------------------------------------------------------------------------------------------------
+File: Alcon_9140483716.pdf
+  Supplier Name: Alcon
+  Invoice Number: 9140483716
+  Serial Numbers: ['000000016014350048']
+----------------------------------------------------------------------------------------------------
+File: DeviceTechnologies_0093664538.PDF
+  Supplier Name: Device Technologies
+  Invoice Number: 93664538
+  Serial Numbers: ['T2400344', 'T2381315']
+----------------------------------------------------------------------------------------------------
+File: DeviceTechnologies_0093664539.PDF
+  Supplier Name: Device Technologies
+  Invoice Number: 93664539
+  Serial Numbers: ['S2792571', 'S2856888']
+----------------------------------------------------------------------------------------------------
+File: Medix21_26479.pdf
+  Supplier Name: Medix21
+  Invoice Number: NZINV/26479
+  Serial Numbers: ['07424503826']
+----------------------------------------------------------------------------------------------------
+File: Medix21_26910.pdf
+  Supplier Name: Medix21
+  Invoice Number: NZINV/26910
+  Serial Numbers: ['04423846204']
+----------------------------------------------------------------------------------------------------
+File: Medix21_27075.pdf
+  Supplier Name: Medix21
+  Invoice Number: NZINV/27075
+  Serial Numbers: ['01218403014']
+----------------------------------------------------------------------------------------------------
+File: SurgiVision_SO-00213175_2025.04.30_09.12.03.PDF
+  Supplier Name: SurgiVision
+  Invoice Number: SI-00213175
+  Serial Numbers: ['240426AG143C007SV']
+----------------------------------------------------------------------------------------------------
+File: SurgiVision_SO-00214438_2025.07.17_17.21.46.PDF
+  Supplier Name: SurgiVision
+  Invoice Number: SI-00214438
+  Serial Numbers: ['240927AG993N013SV']
+----------------------------------------------------------------------------------------------------
+File: SurgiVision_SO-00214504_2025.07.24_10.14.44.PDF
+  Supplier Name: SurgiVision
+  Invoice Number: SI-00214504
+  Serial Numbers: ['241210AG127S016SV']
+----------------------------------------------------------------------------------------------------
+File: Toomac_703245-00.PDF
+  Supplier Name: Toomac
+  Invoice Number: 703245-00
+  Serial Numbers: ['3Q13635012']
+----------------------------------------------------------------------------------------------------
+File: Toomac_703401-00.PDF
+  Supplier Name: Toomac
+  Invoice Number: 703401-00
+  Serial Numbers: ['3R04503003']
+----------------------------------------------------------------------------------------------------
+File: Toomac_703407-00.PDF
+  Supplier Name: Toomac
+  Invoice Number: 703407-00
+  Serial Numbers: ['O30523001J-3']
+----------------------------------------------------------------------------------------------------
+File: ZEISS_4187051375.pdf
+  Supplier Name: Zeiss
+  Invoice Number: 4187051375
+  Serial Numbers: ['6S2303460050', '6S2302780122', '6S2310820073', '6S2306940078', '6S2315230147']
+----------------------------------------------------------------------------------------------------
+File: ZEISS_4187051438.pdf
+  Supplier Name: Zeiss
+  Invoice Number: 4187051438
+  Serial Numbers: ['3S2408630030']
+----------------------------------------------------------------------------------------------------
+File: ZEISS_4187051439.pdf
+  Supplier Name: Zeiss
+  Invoice Number: 4187051439
+  Serial Numbers: ['3S2407400115', '6S2309760050']
+----------------------------------------------------------------------------------------------------
+File: e2286d11-23bb-41a0-a5cd-ba7561d4f58e.pdf
+  Supplier Name: Alcon
+  Invoice Number: 9140457807
+  Serial Numbers: ['000000025423905013']
+----------------------------------------------------------------------------------------------------
+
+
+SUMMARY TABLE (for test documentation):
+====================================================================================================
+
+File: AMO Invoice 1032748883 ( sd 25.06.25 Dr Cho ).pdf
+  Invoice Number: 1032748883
+  Supplier: AMO
+  Serial Numbers: 8033502322, 4159342333, 2317362348, 4088512245, 3213732427
+
+File: AMO Invoice 1032750208 ( sd 27.08.25 Dr Pen ).pdf
+  Invoice Number: 1032750208
+  Supplier: AMO
+  Serial Numbers: 3284142442, 2446902419, 3062982312, 3160622445, 2086302513, 2804842514, 2684972449
+
+File: AMO Invoice 1032750209 ( sd 27.08.25 Dr Car ).pdf
+  Invoice Number: 1032750209
+  Supplier: AMO
+  Serial Numbers: 3287682302, 2221302426, 3396232521, 3477742228
+
+File: Alcon_9140481167.pdf
+  Invoice Number: 9140481167
+  Supplier: Alcon
+  Serial Numbers: 000000025424111139
+
+File: Alcon_9140482151.pdf
+  Invoice Number: 9140482151
+  Supplier: Alcon
+  Serial Numbers: 000000025579955045
+
+File: Alcon_9140483716.pdf
+  Invoice Number: 9140483716
+  Supplier: Alcon
+  Serial Numbers: 000000016014350048
+
+File: DeviceTechnologies_0093664538.PDF
+  Invoice Number: 93664538
+  Supplier: Device Technologies
+  Serial Numbers: T2400344, T2381315
+
+File: DeviceTechnologies_0093664539.PDF
+  Invoice Number: 93664539
+  Supplier: Device Technologies
+  Serial Numbers: S2792571, S2856888
+
+File: Medix21_26479.pdf
+  Invoice Number: NZINV/26479
+  Supplier: Medix21
+  Serial Numbers: 07424503826
+
+File: Medix21_26910.pdf
+  Invoice Number: NZINV/26910
+  Supplier: Medix21
+  Serial Numbers: 04423846204
+
+File: Medix21_27075.pdf
+  Invoice Number: NZINV/27075
+  Supplier: Medix21
+  Serial Numbers: 01218403014
+
+File: SurgiVision_SO-00213175_2025.04.30_09.12.03.PDF
+  Invoice Number: SI-00213175
+  Supplier: SurgiVision
+  Serial Numbers: 240426AG143C007SV
+
+File: SurgiVision_SO-00214438_2025.07.17_17.21.46.PDF
+  Invoice Number: SI-00214438
+  Supplier: SurgiVision
+  Serial Numbers: 240927AG993N013SV
+
+File: SurgiVision_SO-00214504_2025.07.24_10.14.44.PDF
+  Invoice Number: SI-00214504
+  Supplier: SurgiVision
+  Serial Numbers: 241210AG127S016SV
+
+File: Toomac_703245-00.PDF
+  Invoice Number: 703245-00
+  Supplier: Toomac
+  Serial Numbers: 3Q13635012
+
+File: Toomac_703401-00.PDF
+  Invoice Number: 703401-00
+  Supplier: Toomac
+  Serial Numbers: 3R04503003
+
+File: Toomac_703407-00.PDF
+  Invoice Number: 703407-00
+  Supplier: Toomac
+  Serial Numbers: O30523001J-3
+
+File: ZEISS_4187051375.pdf
+  Invoice Number: 4187051375
+  Supplier: Zeiss
+  Serial Numbers: 6S2303460050, 6S2302780122, 6S2310820073, 6S2306940078, 6S2315230147
+
+File: ZEISS_4187051438.pdf
+  Invoice Number: 4187051438
+  Supplier: Zeiss
+  Serial Numbers: 3S2408630030
+
+File: ZEISS_4187051439.pdf
+  Invoice Number: 4187051439
+  Supplier: Zeiss
+  Serial Numbers: 3S2407400115, 6S2309760050
+
+File: e2286d11-23bb-41a0-a5cd-ba7561d4f58e.pdf
+  Invoice Number: 9140457807
+  Supplier: Alcon
+  Serial Numbers: 000000025423905013

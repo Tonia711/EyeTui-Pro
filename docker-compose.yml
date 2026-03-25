@@ -1,0 +1,81 @@
+# =============================================
+# Docker Compose for EyeTui
+# Full stack: PostgreSQL + FastAPI Backend + React Frontend
+# =============================================
+# Usage:
+#   docker-compose up --build       # Build and start all services
+#   docker-compose down             # Stop all services
+#   docker-compose down -v          # Stop and remove volumes (deletes DB data!)
+# =============================================
+
+services:
+  # PostgreSQL Database
+  db:
+    image: postgres:15-alpine
+    container_name: eyetui-db
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: hospital_lens
+      TZ: Pacific/Auckland
+    volumes:
+      # Persist data to local folder
+      - ./postgres_data:/var/lib/postgresql/data
+      # Initialize schema on first run
+      - ./db/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
+    ports:
+      - "5433:5432" # Map to 5433 to avoid conflict with local Postgres
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U postgres -d hospital_lens" ]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  # FastAPI Backend
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: eyetui-backend
+    environment:
+      DATABASE_URL: postgresql://postgres:postgres@db:5432/hospital_lens
+      TZ: Pacific/Auckland
+    volumes:
+      # Persist learned rules
+      - ./backend/learned_rules.json:/app/learned_rules.json
+    ports:
+      - "8001:8000" # Use 8001 to avoid conflict with local dev uvicorn on 8000
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/health')"]
+      interval: 5s
+      timeout: 10s
+      retries: 12
+      start_period: 30s
+    restart: unless-stopped
+
+  # React Frontend (served by Nginx)
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: eyetui-frontend
+    ports:
+      - "80:80" # HTTP (redirects to HTTPS)
+      - "443:443" # HTTPS
+    volumes:
+      # Mount templates for dynamic config
+      - ./nginx/templates:/etc/nginx/templates:ro
+      # Mount SSL certificates (Dev Identity)
+      - ./certs/dev:/etc/nginx/ssl:ro
+    environment:
+      # In Standard mode, backend is on another container
+      BACKEND_HOST: backend
+      TZ: Pacific/Auckland
+    depends_on:
+      backend:
+        condition: service_healthy
+    restart: unless-stopped

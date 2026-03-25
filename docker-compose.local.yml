@@ -1,0 +1,34 @@
+# =============================================
+# Docker Compose Override for Local HTTP Development
+# =============================================
+# Usage:
+#   docker-compose -f docker-compose.yml -f docker-compose.local.yml up -d
+#
+# This override:
+#   - Uses HTTP only (no SSL certificates needed)
+#   - Uses pre-built images from GHCR (no local build needed)
+#   - Perfect for new developer onboarding
+# =============================================
+
+services:
+  backend:
+    image: ghcr.io/cs778-ly-2025-consulting-challenge/eyetui-backend:latest
+    build: null  # Disable local build, use image only
+    # Override healthcheck for GHCR images (uses simple TCP check instead of /api/health)
+    healthcheck:
+      test: ["CMD", "python", "-c", "import socket; s = socket.socket(); s.connect(('localhost', 8000)); s.close()"]
+      interval: 5s
+      timeout: 10s
+      retries: 12
+      start_period: 30s
+
+  frontend:
+    image: ghcr.io/cs778-ly-2025-consulting-challenge/eyetui-frontend:latest
+    build: null  # Disable local build, use image only
+    ports:
+      - "80:80"
+      # Remove 443 port - HTTP only
+    volumes:
+      # Use HTTP-only nginx config
+      - ./nginx/templates/default.conf.template.http:/etc/nginx/templates/default.conf.template:ro
+      # No SSL certificates needed

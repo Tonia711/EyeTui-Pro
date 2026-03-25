@@ -1,0 +1,47 @@
+@import "tailwindcss";
+@import "./styles/globals.css";
+
+@layer utilities {
+  .text-brand-blue {
+    color: #008bce;
+  }
+
+  .custom-scrollbar {
+    overflow-y: auto;
+  }
+
+  .custom-scrollbar::-webkit-scrollbar {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 8px;
+    height: 8px;
+    display: block;
+  }
+
+  .custom-scrollbar::-webkit-scrollbar-track {
+    background: #f1f5f9;
+    border-radius: 4px;
+    margin: 2px 0;
+  }
+
+  .custom-scrollbar::-webkit-scrollbar-thumb {
+    background: #cbd5e1;
+    border-radius: 4px;
+    min-height: 20px;
+  }
+
+  .custom-scrollbar::-webkit-scrollbar-thumb:hover {
+    background: #94a3b8;
+  }
+}
+
+@layer base {
+  nav button:hover {
+    color: white !important;
+  }
+
+  .bg-white input::placeholder {
+    font-weight: 700;
+    color: #4b5563;
+  }
+}

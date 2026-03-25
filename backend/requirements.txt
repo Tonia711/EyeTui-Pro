@@ -1,0 +1,44 @@
+# Core FastAPI dependencies
+fastapi>=0.109.0
+uvicorn[standard]>=0.27.0
+python-multipart>=0.0.6
+
+# Database
+sqlalchemy>=2.0.25
+asyncpg>=0.29.0
+psycopg2-binary>=2.9.9
+alembic>=1.13.1
+
+# Data validation
+pydantic>=2.5.3
+pydantic-settings>=2.1.0
+email-validator>=2.1.0
+
+# Data parsing
+pdfplumber>=0.10.3
+pyzbar>=0.1.9
+pylibdmtx>=0.1.10  # For Data Matrix barcode support
+numpy>=1.24.0  # Required by pylibdmtx for image processing
+Pillow>=10.0.0
+pytesseract>=0.3.10
+paddlepaddle>=2.5.0  # PaddleOCR backend
+paddleocr>=2.7.0  # High-accuracy OCR engine
+pandas>=2.2.0
+openpyxl>=3.1.2
+python-barcode>=0.15.1
+opencv-python>=4.5.1  # OpenCV for enhanced barcode detection and image preprocessing
+pyrxing>=0.4.0  # ZXing-C++ Python binding (fast, no system dependencies, requires Python >= 3.11)
+# Alternative: zxing-cpp>=0.0.1  # Official ZXing-C++ binding (if pyrxing not available)
+
+# PDF generation
+reportlab>=4.0.7
+
+# Utilities
+python-dateutil>=2.8.2
+python-dotenv>=1.0.0
+
+# Testing (optional)
+pytest>=7.4.3
+pytest-asyncio>=0.23.3
+httpx>=0.26.0
+coverage>=7.6.0

@@ -1,0 +1,21 @@
+# GHCR override for local development
+# Use with: docker-compose -f docker-compose.yml -f docker-compose.ghcr.yml up -d
+# 
+# Note: Uses the same :latest images as docker-compose.prod.yml
+# (Same Dockerfile, so images are identical regardless of compose file)
+
+services:
+  backend:
+    image: ghcr.io/cs778-ly-2025-consulting-challenge/eyetui-backend:latest
+    build: null
+    # Override healthcheck for GHCR images (uses simple TCP check instead of /api/health)
+    healthcheck:
+      test: ["CMD", "python", "-c", "import socket; s = socket.socket(); s.connect(('localhost', 8000)); s.close()"]
+      interval: 5s
+      timeout: 10s
+      retries: 12
+      start_period: 30s
+
+  frontend:
+    image: ghcr.io/cs778-ly-2025-consulting-challenge/eyetui-frontend:latest
+    build: null

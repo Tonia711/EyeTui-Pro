@@ -1,0 +1,125 @@
+# Docker Compose for Production Deployment (HTTPS)
+# Uses pre-built images from GitHub Container Registry (GHCR)
+#
+# SETUP (first time only):
+#   1. Generate SSL certificate: tailscale cert your-machine.tailXXXXX.ts.net
+#   2. Move certs to ./certs/server.crt and ./certs/server.key
+#   3. Login to GHCR: docker login ghcr.io -u YOUR_GITHUB_USERNAME -p YOUR_PAT
+#
+# Usage:
+#   docker-compose -f docker-compose.prod.yml pull
+#   docker-compose -f docker-compose.prod.yml up -d
+
+services:
+  # PostgreSQL Database
+  db:
+    image: postgres:15-alpine
+    container_name: eyetui-db
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: hospital_lens
+      TZ: Pacific/Auckland
+    volumes:
+      # Persist data to local folder
+      - ./postgres_data:/var/lib/postgresql/data
+      # Initialize schema on first run
+      - ./db/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
+      # Backup directory
+      - ./backups:/backups
+    ports:
+      - "5433:5432"
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U postgres -d hospital_lens" ]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  # Automated Database Backup
+  db-backup:
+    image: prodrigestivill/postgres-backup-local
+    container_name: eyetui-db-backup
+    restart: unless-stopped
+    # Share network to reach db
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      - ./backups:/backups
+    environment:
+      - POSTGRES_HOST=db
+      - POSTGRES_DB=hospital_lens
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+      - POSTGRES_EXTRA_OPTS=-Z9 --schema=public --blobs
+      - SCHEDULE=@daily # Run once a day (midnight)
+      - BACKUP_KEEP_DAYS=7 # Keep last 7 days
+      - BACKUP_KEEP_WEEKS=4 # Keep last 4 weeks
+      - BACKUP_KEEP_MONTHS=6 # Keep last 6 months
+      - HEALTHCHECK_PORT=8080
+      - TZ=Pacific/Auckland
+      # If machine is off at midnight, backup on next startup
+      - BACKUP_ON_START=TRUE
+
+  # Tailscale Sidecar
+  ts-sidecar:
+    image: tailscale/tailscale:latest
+    container_name: eyetui-tailscale
+    hostname: eyetui-docker
+    environment:
+      - TS_AUTHKEY=${TS_AUTHKEY}
+      - TS_STATE_DIR=/var/lib/tailscale
+      - TS_USERSPACE=false
+      - TZ=Pacific/Auckland
+    volumes:
+      - ./tailscale_state:/var/lib/tailscale
+      - ./certs/prod:/tmp/certs
+      - /dev/net/tun:/dev/net/tun
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+    ports:
+      - "80:80" # Frontend HTTP
+      - "443:443" # Frontend HTTPS
+      - "8001:8000" # Backend API (Exposed on 8001 host -> 8000 container)
+    restart: unless-stopped
+
+  # FastAPI Backend (via Sidecar)
+  backend:
+    image: ghcr.io/cs778-ly-2025-consulting-challenge/eyetui-backend:latest
+    container_name: eyetui-backend
+    network_mode: service:ts-sidecar
+    environment:
+      # Connect to 'db' container on default docker network
+      DATABASE_URL: postgresql://postgres:postgres@db:5432/hospital_lens
+      TZ: Pacific/Auckland
+    volumes:
+      - ./backend/learned_rules.json:/app/learned_rules.json
+    depends_on:
+      db:
+        condition: service_healthy
+      ts-sidecar:
+        condition: service_started
+    restart: unless-stopped
+
+  # React Frontend with Nginx (via Sidecar)
+  frontend:
+    image: ghcr.io/cs778-ly-2025-consulting-challenge/eyetui-frontend:latest
+    container_name: eyetui-frontend
+    network_mode: service:ts-sidecar
+    volumes:
+      # Mount templates directory for envsubst
+      - ./nginx/templates:/etc/nginx/templates:ro
+      - ./certs/prod:/etc/nginx/ssl:ro
+      - ./logs/nginx:/var/log/nginx
+    environment:
+      # In Sidecar mode, backend is localhost
+      BACKEND_HOST: 127.0.0.1
+      TZ: Pacific/Auckland
+    depends_on:
+      backend:
+        condition: service_started
+      ts-sidecar:
+        condition: service_started
+    restart: unless-stopped

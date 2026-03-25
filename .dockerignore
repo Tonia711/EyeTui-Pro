@@ -1,0 +1,55 @@
+# Docker ignore file - exclude from build context
+
+# Dependencies
+node_modules/
+backend/venv/
+
+# Build artifacts
+build/
+dist/
+*.egg-info/
+__pycache__/
+*.pyc
+
+# Version control
+.git/
+.gitignore
+
+# Environment files (secrets)
+.env
+.env.local
+.env.*.local
+backend/.env
+
+# IDE / Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Logs
+*.log
+npm-debug.log*
+
+# Docker files (not needed in container)
+docker-compose*.yml
+Dockerfile*
+.dockerignore
+docker_build*.log
+
+# Data persistence folder
+postgres_data/
+backups/
+tailscale_state/
+logs/
+certs/
+
+# Testing / Temp
+*.tmp
+*.temp
+test_result.log
+invoice_extraction_results.txt
+
+# OS files
+.DS_Store
+Thumbs.db
