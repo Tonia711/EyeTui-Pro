@@ -2,6 +2,18 @@
 
 This document explains the helper scripts under `scripts/` and how to run the backend in two clear ways.
 
+## Important: Run from the Correct Directory
+
+`scripts/run_server.sh` lives in the project root, not inside `backend/`.
+
+- If your current directory is project root (`EyeTui-Pro/`), use:
+  - `bash scripts/run_server.sh --env <your-conda-env>`
+- If your current directory is `backend/`, use:
+  - `bash ../scripts/run_server.sh --env <your-conda-env>`
+
+If you run `bash scripts/run_server.sh` inside `backend/`, you will get:
+- `bash: scripts/run_server.sh: No such file or directory`
+
 ## Two Ways to Run the Backend
 
 ### Option A — Use the script (recommended)
@@ -19,6 +31,12 @@ bash scripts/run_server.sh --env <your-conda-env>
 
 # generic (no conda): use system Python or an already-activated venv
 bash scripts/run_server.sh
+```
+
+If running from `backend/`, use:
+
+```bash
+bash ../scripts/run_server.sh --env <your-conda-env>
 ```
 
 Notes:
@@ -51,6 +69,9 @@ uvicorn app.main:app --reload --port 8000
 
 - If you use conda, either run `conda activate <your-conda-env>` first or pass `--env <your-conda-env>` to `scripts/run_server.sh`.
 - On macOS, barcode libraries often need Homebrew paths in `DYLD_LIBRARY_PATH` / `LIBRARY_PATH`. `scripts/run_server.sh` and `scripts/fix_zbar.sh` handle this for you.
+- If startup fails with `DATABASE_URL is not set`, create `.env` from `env.example` in `backend/`:
+  - `cd backend && cp env.example .env`
+  - Then update `DATABASE_URL` in `.env` and restart.
 
 ## Data Matrix Support (Optional)
 
