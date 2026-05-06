@@ -7,6 +7,7 @@ import { SettingsPanel } from "./components/SettingsPanel";
 import { AppLayout } from "./layouts/AppLayout";
 import { LandingPage } from "./pages/LandingPage";
 import { ReceivingPage } from "./pages/ReceivingPage";
+import { ChatbotPage } from "./pages/ChatbotPage";
 
 export default function App() {
   const [selectedClinic, setSelectedClinic] = useState("All Clinics");
@@ -40,6 +41,7 @@ export default function App() {
           path="invoices"
           element={<InvoiceManagementPanel isActive />}
         />
+        <Route path="chatbot" element={<ChatbotPage />} />
         <Route path="settings" element={<SettingsPanel />} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />

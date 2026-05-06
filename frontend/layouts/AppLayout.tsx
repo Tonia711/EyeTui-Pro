@@ -1,11 +1,15 @@
+import { useState } from "react";
 import { NavLink, Outlet, Link } from "react-router-dom";
 import { Settings } from "lucide-react";
 import landing from "../assets/landing.png";
+import { ChatbotPanel } from "../components/chatbot/ChatbotPanel";
 
 const navLinkBaseClass =
   "h-[45px] px-6 pb-1 flex items-end font-bold transition-colors";
 
 export function AppLayout() {
+  const [chatOpen, setChatOpen] = useState(false);
+
   return (
     <div className="min-h-screen bg-white">
       <nav className="bg-black">
@@ -48,6 +52,14 @@ export function AppLayout() {
                 >
                   Invoice List
                 </NavLink>
+                <NavLink
+                  to="/chatbot"
+                  className={({ isActive }) =>
+                    `${navLinkBaseClass} ${isActive ? "text-white font-black" : "text-gray-400 hover:text-gray-200"}`
+                  }
+                >
+                  AI Chatbot
+                </NavLink>
               </div>
             </div>
             <NavLink
@@ -71,6 +83,20 @@ export function AppLayout() {
           <Outlet />
         </div>
       </div>
+
+      <button
+        type="button"
+        onClick={() => setChatOpen((open) => !open)}
+        className="fixed bottom-6 right-6 z-40 rounded-full bg-black px-5 py-3 text-sm font-semibold text-white shadow-lg transition hover:bg-gray-800"
+      >
+        {chatOpen ? "Close chat" : "AI Chat"}
+      </button>
+
+      {chatOpen ? (
+        <div className="fixed bottom-20 right-6 z-40 w-[380px] rounded-2xl border border-gray-200 bg-white p-4 shadow-2xl">
+          <ChatbotPanel title="AI Chatbot" compact />
+        </div>
+      ) : null}
     </div>
   );
 }
