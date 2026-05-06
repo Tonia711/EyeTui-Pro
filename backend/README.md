@@ -73,6 +73,60 @@ uvicorn app.main:app --reload --port 8000
   - `cd backend && cp env.example .env`
   - Then update `DATABASE_URL` in `.env` and restart.
 
+## Chatbot API (MVP)
+
+Backend now includes an MVP chatbot endpoint:
+
+```bash
+POST /chat/ask
+```
+
+Request body:
+
+```json
+{
+  "question": "Current inventory status"
+}
+```
+
+Supported routes in MVP:
+- `doc_qa`: system usage, setup, troubleshooting, workflow questions
+- `business_qa`: inventory overview, invoice details, unmatched reconciliation summary, supplier/company/site overviews
+- `out_of_scope`: unsupported questions
+
+Routing pipeline:
+- First try LLM query plan parsing (`route + entity + operation + filters`, strict backend validation)
+- If query plan parsing is unavailable or invalid, fallback to LLM/rule-based intent routing
+- `doc_qa` retrieves local project docs (`README.md`, `backend/README.md`, `docs/*.md`)
+- `business_qa` stays on backend-controlled queries and does not send business data to the LLM
+- `business_qa` now builds a validated query plan (`entity + operation + filters`) before execution
+
+Optional environment variables for LLM intent parsing:
+
+```bash
+OPENAI_API_KEY=your_key_here
+# Optional:
+# OPENAI_BASE_URL=https://api.openai.com/v1
+# CHATBOT_INTENT_MODEL=gpt-4o-mini
+# CHATBOT_QUERY_PLAN_MODEL=gpt-4o-mini
+# CHATBOT_SAFE_NLG_ENABLED=true
+# CHATBOT_ANSWER_MODEL=gpt-4o-mini
+```
+
+Safe NLG notes:
+- `CHATBOT_SAFE_NLG_ENABLED=true` enables a natural-language rewrite layer for business answers.
+- The rewrite layer only receives sanitized aggregate metrics (no serial numbers, invoice numbers, or row-level data).
+
+Example questions:
+- `Current inventory status`
+- `Invoice 9140481167 details`
+- `What are the unmatched reconciliation records?`
+- `How many suppliers do we have?`
+- `How many companies do we have?`
+- `How many clinics do we have?`
+- `How do I start the backend?`
+- `Where is the invoice learning rules documentation?`
+
 ## Data Matrix Support (Optional)
 
 If `pyzbar` cannot read Data Matrix codes, the backend falls back to `pylibdmtx`.

@@ -3,6 +3,12 @@ from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 from sqlalchemy import select, func
 import os
+import re
+import json
+import httpx
+from pydantic import ValidationError
+from pathlib import Path
+from functools import lru_cache
 
 # Disable model source check for faster OCR initialization
 os.environ['DISABLE_MODEL_SOURCE_CHECK'] = 'True'
@@ -53,6 +59,11 @@ from .schemas import (
     LensTypeCreate,
     LensTypeUpdate,
     LensTypeOut,
+    ChatAskRequest,
+    ChatAskResponse,
+    ChatSource,
+    ChatIntentPayload,
+    ChatQueryPlan,
 )
 
 from sqlalchemy.exc import IntegrityError
@@ -280,6 +291,963 @@ def get_db():
         yield db
     finally:
         db.close()
+
+
+def classify_chat_intent(question: str) -> str:
+    text = question.lower()
+
+    invoice_keywords = ["invoice", "\u53d1\u7968"]
+    inventory_keywords = ["inventory", "stock", "\u5e93\u5b58"]
+    serial_keywords = ["serial", "serial number", "sn", "\u5e8f\u5217\u53f7"]
+    product_keywords = ["product", "item", "\u4ea7\u54c1"]
+    unmatched_keywords = [
+        "unmatched",
+        "not matched",
+        "reconciliation",
+        "mismatch",
+        "\u5bf9\u8d26",
+        "\u672a\u5339\u914d",
+        "\u5339\u914d",
+    ]
+    supplier_keywords = [
+        "supplier",
+        "suppliers",
+        "vendor",
+        "vendors",
+        "\u4f9b\u5e94\u5546",  # 供应商
+    ]
+    company_keywords = [
+        "company",
+        "companies",
+        "manufacturer",
+        "manufacturers",
+        "\u516c\u53f8",  # 公司
+    ]
+    site_keywords = ["site", "sites", "clinic", "clinics", "location", "locations", "\u8bca\u6240"]
+    existence_keywords = ["exist", "exists", "has", "have", "\u6709", "\u662f\u5426", "\u5b58\u5728"]
+
+    if any(k in text for k in serial_keywords):
+        # Serial + product/inventory/existence questions should query lens inventory first.
+        if any(k in text for k in product_keywords + inventory_keywords + existence_keywords):
+            return "inventory_item_lookup"
+        # Serial questions mentioning invoice should go to invoice lookups.
+        if any(k in text for k in invoice_keywords):
+            return "invoice_detail"
+        # Default serial lookup favors product existence in inventory.
+        return "inventory_item_lookup"
+    if any(k in text for k in invoice_keywords):
+        return "invoice_detail"
+    if any(k in text for k in unmatched_keywords):
+        return "unmatched_summary"
+    if any(k in text for k in supplier_keywords):
+        return "supplier_overview"
+    if any(k in text for k in company_keywords):
+        return "company_overview"
+    if any(k in text for k in site_keywords):
+        return "site_overview"
+    if any(k in text for k in inventory_keywords) or any(k in text for k in product_keywords):
+        return "inventory_overview"
+    return "unsupported"
+
+
+def classify_chat_route(question: str) -> str:
+    text = question.lower()
+    business_intent = classify_chat_intent(question)
+    if business_intent != "unsupported":
+        return "business_qa"
+
+    doc_keywords = [
+        "how",
+        "what",
+        "where",
+        "why",
+        "setup",
+        "install",
+        "run",
+        "start",
+        "error",
+        "fix",
+        "readme",
+        "docs",
+        "documentation",
+        "system",
+        "configuration",
+        "deploy",
+        "troubleshooting",
+        "\u600e\u4e48",
+        "\u5982\u4f55",
+        "\u62a5\u9519",
+        "\u542f\u52a8",
+        "\u5b89\u88c5",
+        "\u914d\u7f6e",
+        "\u90e8\u7f72",
+        "\u6587\u6863",
+        "\u7cfb\u7edf",
+    ]
+    if any(keyword in text for keyword in doc_keywords):
+        return "doc_qa"
+    return "out_of_scope"
+
+
+def extract_invoice_number(question: str) -> str | None:
+    # Prefer numeric invoice IDs first (common in this system).
+    # Use digit-only boundaries instead of \b to avoid Unicode word-boundary issues
+    # when digits are adjacent to Chinese characters.
+    numeric_matches = re.findall(r"(?<!\d)\d{6,}(?!\d)", question)
+    if numeric_matches:
+        return numeric_matches[0]
+
+    # Fallback: allow alphanumeric invoice pattern.
+    mixed_matches = re.findall(r"(?<![A-Za-z0-9-])[A-Za-z0-9-]{6,}(?![A-Za-z0-9-])", question)
+    for candidate in mixed_matches:
+        # Guardrail: treat only tokens containing at least one digit as IDs.
+        # This prevents plain words like "invoice" from being misclassified as an invoice number.
+        if any(ch.isdigit() for ch in candidate):
+            return candidate
+    return None
+
+
+def is_serial_lookup_question(question: str) -> bool:
+    text = question.lower()
+    serial_markers = [
+        "serial",
+        "serial number",
+        "sn",
+        "\u5e8f\u5217\u53f7",  # 序列号
+    ]
+    return any(marker in text for marker in serial_markers)
+
+
+def detect_inventory_focus(question: str) -> str:
+    text = question.lower()
+    if any(k in text for k in ["used", "\u5df2\u4f7f\u7528"]):
+        return "used"
+    if any(k in text for k in ["unmatched", "not matched", "\u672a\u5339\u914d"]):
+        return "unmatched"
+    if any(k in text for k in ["matched", "\u5df2\u5339\u914d", "\u5339\u914d"]):
+        return "matched"
+    if any(k in text for k in ["in stock", "stock", "inventory", "\u5e93\u5b58", "\u5728\u5e93"]):
+        return "in_stock"
+    return "overview"
+
+
+def parse_intent_with_llm(question: str) -> ChatIntentPayload | None:
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        return None
+
+    model = os.getenv("CHATBOT_INTENT_MODEL", "gpt-4o-mini")
+    base_url = os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1").rstrip("/")
+
+    system_prompt = (
+        "You are a router and intent parser for an inventory/invoice/reconciliation system. "
+        "Return JSON only with keys: route, intent, invoice_number, doc_search_terms. "
+        "Valid route values are: business_qa, doc_qa, out_of_scope. "
+        "Valid intent values are: inventory_overview, inventory_item_lookup, invoice_detail, unmatched_summary, supplier_overview, company_overview, site_overview, unsupported. "
+        "Use business_qa only for inventory, invoice, reconciliation status questions. "
+        "Use doc_qa for system usage, setup, troubleshooting, workflow, and documentation questions. "
+        "Use out_of_scope for unrelated questions. "
+        "Only set invoice_number when intent is invoice_detail and a likely invoice number exists. "
+        "For doc_qa, provide 2-6 short English search terms in doc_search_terms."
+    )
+    user_prompt = f"Question: {question}"
+
+    payload = {
+        "model": model,
+        "temperature": 0,
+        "response_format": {"type": "json_object"},
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ],
+    }
+
+    try:
+        with httpx.Client(timeout=12.0) as client:
+            response = client.post(
+                f"{base_url}/chat/completions",
+                headers={
+                    "Authorization": f"Bearer {api_key}",
+                    "Content-Type": "application/json",
+                },
+                json=payload,
+            )
+            response.raise_for_status()
+            body = response.json()
+            content = body["choices"][0]["message"]["content"]
+            parsed = json.loads(content)
+            return ChatIntentPayload.model_validate(parsed)
+    except (httpx.HTTPError, KeyError, json.JSONDecodeError, ValidationError):
+        return None
+
+
+def parse_query_plan_with_llm(question: str) -> ChatQueryPlan | None:
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        return None
+
+    model = os.getenv("CHATBOT_QUERY_PLAN_MODEL", os.getenv("CHATBOT_INTENT_MODEL", "gpt-4o-mini"))
+    base_url = os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1").rstrip("/")
+    system_prompt = (
+        "You are a query planner for an inventory/invoice/reconciliation system. "
+        "Return JSON only with keys: route, entity, operation, serial_number, invoice_number. "
+        "Valid route: business_qa, doc_qa, out_of_scope. "
+        "Valid entity: lens, invoice, supplier, company, site, reconciliation. "
+        "Valid operation: overview, count, exists, detail, summary. "
+        "Use business_qa only when a database-backed answer is needed. "
+        "If the user asks system usage/setup/troubleshooting docs questions, return route=doc_qa. "
+        "Do not invent serial_number or invoice_number."
+    )
+    payload = {
+        "model": model,
+        "temperature": 0,
+        "response_format": {"type": "json_object"},
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": f"Question: {question}"},
+        ],
+    }
+
+    try:
+        with httpx.Client(timeout=12.0) as client:
+            response = client.post(
+                f"{base_url}/chat/completions",
+                headers={
+                    "Authorization": f"Bearer {api_key}",
+                    "Content-Type": "application/json",
+                },
+                json=payload,
+            )
+            response.raise_for_status()
+            body = response.json()
+            content = body["choices"][0]["message"]["content"]
+            parsed = json.loads(content)
+            return ChatQueryPlan.model_validate(parsed)
+    except (httpx.HTTPError, KeyError, json.JSONDecodeError, ValidationError):
+        return None
+
+
+def resolve_chat_intent(question: str) -> ChatIntentPayload:
+    llm_intent = parse_intent_with_llm(question)
+    if llm_intent:
+        if llm_intent.route == "business_qa" and not llm_intent.intent:
+            llm_intent.intent = classify_chat_intent(question)
+        if llm_intent.intent == "invoice_detail" and not llm_intent.invoice_number:
+            llm_intent.invoice_number = extract_invoice_number(question)
+        return llm_intent
+
+    fallback_intent = classify_chat_intent(question)
+    fallback_route = classify_chat_route(question)
+    return ChatIntentPayload(
+        route=fallback_route,
+        intent=fallback_intent if fallback_route == "business_qa" else None,
+        invoice_number=extract_invoice_number(question) if fallback_intent == "invoice_detail" else None,
+        doc_search_terms=[],
+    )
+
+
+def build_query_plan_from_intent(payload: ChatIntentPayload, question: str) -> ChatQueryPlan:
+    if payload.route != "business_qa":
+        return ChatQueryPlan(route=payload.route)
+
+    intent = payload.intent or "unsupported"
+    serial_in_question = extract_invoice_number(question) if is_serial_lookup_question(question) else None
+
+    if intent == "inventory_overview":
+        return ChatQueryPlan(route="business_qa", entity="lens", operation="overview")
+    if intent == "inventory_item_lookup":
+        return ChatQueryPlan(
+            route="business_qa",
+            entity="lens",
+            operation="exists",
+            serial_number=serial_in_question or extract_invoice_number(question),
+        )
+    if intent == "invoice_detail":
+        if is_serial_lookup_question(question):
+            return ChatQueryPlan(
+                route="business_qa",
+                entity="invoice",
+                operation="detail",
+                serial_number=serial_in_question or payload.invoice_number,
+            )
+        return ChatQueryPlan(
+            route="business_qa",
+            entity="invoice",
+            operation="detail",
+            invoice_number=payload.invoice_number or extract_invoice_number(question),
+        )
+    if intent == "unmatched_summary":
+        return ChatQueryPlan(route="business_qa", entity="reconciliation", operation="summary")
+    if intent == "supplier_overview":
+        return ChatQueryPlan(route="business_qa", entity="supplier", operation="count")
+    if intent == "company_overview":
+        return ChatQueryPlan(route="business_qa", entity="company", operation="count")
+    if intent == "site_overview":
+        return ChatQueryPlan(route="business_qa", entity="site", operation="count")
+
+    return ChatQueryPlan(route="business_qa")
+
+
+def normalize_query_plan(plan: ChatQueryPlan, question: str) -> ChatQueryPlan:
+    """
+    Fill missing filter fields from the original question to keep LLM plans robust.
+    """
+    if plan.route != "business_qa":
+        return plan
+
+    extracted_number = extract_invoice_number(question)
+    if plan.entity == "lens" and plan.operation == "exists" and not plan.serial_number:
+        plan.serial_number = extracted_number
+    if plan.entity == "invoice" and plan.operation == "detail":
+        if is_serial_lookup_question(question):
+            plan.serial_number = plan.serial_number or extracted_number
+            plan.invoice_number = None
+        else:
+            plan.invoice_number = plan.invoice_number or extracted_number
+    return plan
+
+
+def execute_business_query_plan(plan: ChatQueryPlan, db: Session, question: str) -> ChatAskResponse | None:
+    if plan.route != "business_qa" or not plan.entity or not plan.operation:
+        return None
+
+    plan_intent = f"{plan.entity}_{plan.operation}"
+
+    if plan.entity == "supplier" and plan.operation == "count":
+        total_suppliers = db.execute(select(func.count(Supplier.id))).scalar_one()
+        return ChatAskResponse(
+            route="business_qa",
+            intent=plan_intent,
+            answer=f"There are {total_suppliers} suppliers in the system.",
+            data={"total_suppliers": total_suppliers},
+            sources=[ChatSource(source_type="table", source_value="supplier")],
+        )
+
+    if plan.entity == "company" and plan.operation == "count":
+        total_companies = db.execute(select(func.count(Company.id))).scalar_one()
+        return ChatAskResponse(
+            route="business_qa",
+            intent=plan_intent,
+            answer=f"There are {total_companies} companies in the system.",
+            data={"total_companies": total_companies},
+            sources=[ChatSource(source_type="table", source_value="company")],
+        )
+
+    if plan.entity == "site" and plan.operation == "count":
+        total_sites = db.execute(select(func.count(Site.id))).scalar_one()
+        return ChatAskResponse(
+            route="business_qa",
+            intent=plan_intent,
+            answer=f"There are {total_sites} sites in the system.",
+            data={"total_sites": total_sites},
+            sources=[ChatSource(source_type="table", source_value="site")],
+        )
+
+    if plan.entity == "lens" and plan.operation == "exists":
+        if not plan.serial_number:
+            return ChatAskResponse(
+                route="business_qa",
+                intent=plan_intent,
+                answer="Please provide a serial number.",
+                data={},
+                sources=[ChatSource(source_type="hint", source_value="missing_serial_number")],
+            )
+        lens = db.execute(select(Lens).where(Lens.serial_number == plan.serial_number)).scalar_one_or_none()
+        if not lens:
+            return ChatAskResponse(
+                route="business_qa",
+                intent=plan_intent,
+                answer=f"No product found with serial number {plan.serial_number}.",
+                data={"serial_number": plan.serial_number, "exists": False},
+                sources=[ChatSource(source_type="table", source_value="lens")],
+            )
+        return ChatAskResponse(
+            route="business_qa",
+            intent=plan_intent,
+            answer=f"Yes, product with serial number {plan.serial_number} exists.",
+            data={
+                "serial_number": plan.serial_number,
+                "exists": True,
+                "is_used": lens.is_used,
+                "is_matched": lens.is_matched,
+                "type": lens.type,
+                "company": lens.company,
+                "site": lens.site,
+            },
+            sources=[ChatSource(source_type="table", source_value="lens")],
+        )
+
+    if plan.entity == "invoice" and plan.operation == "detail":
+        if not plan.invoice_number and not plan.serial_number:
+            matched_invoice_rows = db.execute(
+                select(func.count(Invoice.id))
+                .select_from(Invoice)
+                .join(Lens, Invoice.serial_number == Lens.serial_number, isouter=True)
+                .where(Lens.is_matched.is_(True))
+            ).scalar_one()
+            unmatched_invoice_rows = db.execute(
+                select(func.count(Invoice.id))
+                .select_from(Invoice)
+                .join(Lens, Invoice.serial_number == Lens.serial_number, isouter=True)
+                .where((Lens.id.is_(None)) | (Lens.is_matched.is_(False)))
+            ).scalar_one()
+            matched_invoice_numbers = db.execute(
+                select(func.count(func.distinct(Invoice.invoice_number)))
+                .select_from(Invoice)
+                .join(Lens, Invoice.serial_number == Lens.serial_number, isouter=True)
+                .where(Lens.is_matched.is_(True))
+            ).scalar_one()
+            unmatched_invoice_numbers = db.execute(
+                select(func.count(func.distinct(Invoice.invoice_number)))
+                .select_from(Invoice)
+                .join(Lens, Invoice.serial_number == Lens.serial_number, isouter=True)
+                .where((Lens.id.is_(None)) | (Lens.is_matched.is_(False)))
+            ).scalar_one()
+            matched_product_rows = db.execute(
+                select(Lens.serial_number)
+                .where(Lens.is_matched.is_(True))
+                .order_by(Lens.id.desc())
+                .limit(10)
+            ).all()
+            return ChatAskResponse(
+                route="business_qa",
+                intent="invoice_match_summary",
+                answer=(
+                    f"Matched invoice rows: {matched_invoice_rows}. Unmatched invoice rows: {unmatched_invoice_rows}. "
+                    f"Matched invoice numbers: {matched_invoice_numbers}. Unmatched invoice numbers: {unmatched_invoice_numbers}."
+                ),
+                data={
+                    "matched_invoice_rows": matched_invoice_rows,
+                    "unmatched_invoice_rows": unmatched_invoice_rows,
+                    "matched_invoice_numbers": matched_invoice_numbers,
+                    "unmatched_invoice_numbers": unmatched_invoice_numbers,
+                    "sample_matched_product_serial_numbers": [
+                        row.serial_number for row in matched_product_rows
+                    ],
+                },
+                sources=[
+                    ChatSource(source_type="table", source_value="invoice"),
+                    ChatSource(source_type="table", source_value="lens"),
+                ],
+            )
+        if plan.serial_number:
+            stmt = (
+                select(
+                    Invoice.invoice_number,
+                    Supplier.name.label("supplier_name"),
+                    Invoice.serial_number,
+                    Lens.is_matched,
+                )
+                .select_from(Invoice)
+                .join(Supplier, Invoice.supplier_id == Supplier.id, isouter=True)
+                .join(Lens, Invoice.serial_number == Lens.serial_number, isouter=True)
+                .where(Invoice.serial_number == plan.serial_number)
+                .order_by(Invoice.id.asc())
+            )
+            lookup_value = plan.serial_number
+            lookup_by_serial = True
+        else:
+            stmt = (
+                select(
+                    Invoice.invoice_number,
+                    Supplier.name.label("supplier_name"),
+                    Invoice.serial_number,
+                    Lens.is_matched,
+                )
+                .select_from(Invoice)
+                .join(Supplier, Invoice.supplier_id == Supplier.id, isouter=True)
+                .join(Lens, Invoice.serial_number == Lens.serial_number, isouter=True)
+                .where(Invoice.invoice_number == plan.invoice_number)
+                .order_by(Invoice.id.asc())
+            )
+            lookup_value = plan.invoice_number or ""
+            lookup_by_serial = False
+        rows = db.execute(stmt).all()
+        if not rows:
+            if lookup_by_serial:
+                not_found_answer = f"No invoice records found for serial number {lookup_value}."
+                not_found_data = {"serial_number": lookup_value, "items": []}
+            else:
+                not_found_answer = f"No records found for invoice number {lookup_value}."
+                not_found_data = {"invoice_number": lookup_value, "items": []}
+            return ChatAskResponse(
+                route="business_qa",
+                intent=plan_intent,
+                answer=not_found_answer,
+                data=not_found_data,
+                sources=[ChatSource(source_type="table", source_value="invoice")],
+            )
+
+        supplier_name = rows[0].supplier_name or "Unknown"
+        invoice_number = rows[0].invoice_number
+        items = [{"serial_number": r.serial_number, "is_matched": bool(r.is_matched)} for r in rows]
+        unmatched_count = sum(1 for item in items if not item["is_matched"])
+        if lookup_by_serial:
+            answer = (
+                f"Serial number {lookup_value} is linked to invoice {invoice_number} from supplier {supplier_name}. "
+                f"Matched status: {'matched' if unmatched_count == 0 else 'partially unmatched'}."
+            )
+        else:
+            answer = (
+                f"Invoice {invoice_number} is from supplier {supplier_name}. It contains {len(items)} serial numbers, "
+                f"with {unmatched_count} unmatched."
+            )
+        return ChatAskResponse(
+            route="business_qa",
+            intent=plan_intent,
+            answer=answer,
+            data={
+                "invoice_number": invoice_number,
+                "supplier_name": supplier_name,
+                "item_count": len(items),
+                "unmatched_count": unmatched_count,
+                "items": items,
+            },
+            sources=[
+                ChatSource(source_type="table", source_value="invoice"),
+                ChatSource(source_type="table", source_value="lens"),
+                ChatSource(source_type="table", source_value="supplier"),
+            ],
+        )
+
+    if plan.entity == "lens" and plan.operation == "overview":
+        total = db.execute(select(func.count(Lens.id))).scalar_one()
+        used = db.execute(select(func.count(Lens.id)).where(Lens.is_used.is_(True))).scalar_one()
+        matched = db.execute(select(func.count(Lens.id)).where(Lens.is_matched.is_(True))).scalar_one()
+        unmatched = total - matched
+        in_stock = total - used
+        focus = detect_inventory_focus(question)
+        by_site_rows = db.execute(
+            select(Site.name, func.count(Lens.id))
+            .select_from(Lens)
+            .join(Site, Lens.site_id == Site.id, isouter=True)
+            .group_by(Site.name)
+            .order_by(func.count(Lens.id).desc())
+        ).all()
+        by_site = [{"site": row[0] or "Unknown", "count": row[1]} for row in by_site_rows]
+        if focus == "used":
+            answer = (
+                f"There are currently {used} used products. "
+                f"For context: {in_stock} in stock, {matched} matched, {unmatched} unmatched."
+            )
+        elif focus == "matched":
+            answer = (
+                f"There are currently {matched} matched products. "
+                f"For context: {in_stock} in stock, {used} used, {unmatched} unmatched."
+            )
+        elif focus == "unmatched":
+            answer = (
+                f"There are currently {unmatched} unmatched products. "
+                f"For context: {in_stock} in stock, {used} used, {matched} matched."
+            )
+        else:
+            answer = (
+                f"There are currently {in_stock} products in stock. "
+                f"Across all records: {total} total, {used} used, {matched} matched, {unmatched} unmatched."
+            )
+        return ChatAskResponse(
+            route="business_qa",
+            intent=plan_intent,
+            answer=answer,
+            data={
+                "in_stock_products": in_stock,
+                "total_lenses": total,
+                "used_lenses": used,
+                "matched_lenses": matched,
+                "unmatched_lenses": unmatched,
+                "by_site": by_site,
+            },
+            sources=[
+                ChatSource(source_type="table", source_value="lens"),
+                ChatSource(source_type="table", source_value="site"),
+            ],
+        )
+
+    if plan.entity == "reconciliation" and plan.operation == "summary":
+        unmatched_lens_rows = db.execute(
+            select(Lens.serial_number).where(Lens.is_matched.is_(False)).order_by(Lens.id.desc()).limit(10)
+        ).all()
+        unmatched_invoice_rows = db.execute(
+            select(Invoice.invoice_number, Invoice.serial_number)
+            .select_from(Invoice)
+            .join(Lens, Invoice.serial_number == Lens.serial_number, isouter=True)
+            .where((Lens.id.is_(None)) | (Lens.is_matched.is_(False)))
+            .order_by(Invoice.id.desc())
+            .limit(10)
+        ).all()
+        total_unmatched_lens = db.execute(select(func.count(Lens.id)).where(Lens.is_matched.is_(False))).scalar_one()
+        total_unmatched_invoice_rows = db.execute(
+            select(func.count(Invoice.id))
+            .select_from(Invoice)
+            .join(Lens, Invoice.serial_number == Lens.serial_number, isouter=True)
+            .where((Lens.id.is_(None)) | (Lens.is_matched.is_(False)))
+        ).scalar_one()
+        return ChatAskResponse(
+            route="business_qa",
+            intent=plan_intent,
+            answer=f"Unmatched lenses: {total_unmatched_lens}. Unmatched invoice rows: {total_unmatched_invoice_rows}.",
+            data={
+                "total_unmatched_lenses": total_unmatched_lens,
+                "total_unmatched_invoice_rows": total_unmatched_invoice_rows,
+                "sample_unmatched_lens_serial_numbers": [r.serial_number for r in unmatched_lens_rows],
+                "sample_unmatched_invoice_rows": [
+                    {"invoice_number": r.invoice_number, "serial_number": r.serial_number}
+                    for r in unmatched_invoice_rows
+                ],
+            },
+            sources=[
+                ChatSource(source_type="table", source_value="lens"),
+                ChatSource(source_type="table", source_value="invoice"),
+            ],
+        )
+
+    return None
+
+
+@lru_cache(maxsize=1)
+def load_doc_chunks() -> list[dict]:
+    project_root = Path(__file__).resolve().parents[2]
+    candidate_paths = [
+        project_root / "README.md",
+        project_root / "backend" / "README.md",
+        project_root / "TESTING_GUIDE.md",
+    ]
+    docs_dir = project_root / "docs"
+    if docs_dir.exists():
+        candidate_paths.extend(sorted(docs_dir.glob("*.md")))
+
+    chunks: list[dict] = []
+    for path in candidate_paths:
+        if not path.exists():
+            continue
+        raw_text = path.read_text(encoding="utf-8", errors="ignore")
+        sections = re.split(r"\n\s*\n", raw_text)
+        current = ""
+        chunk_index = 0
+        for section in sections:
+            content = section.strip()
+            if not content:
+                continue
+            next_chunk = f"{current}\n\n{content}".strip() if current else content
+            if len(next_chunk) <= 900:
+                current = next_chunk
+                continue
+            if current:
+                chunks.append(
+                    {
+                        "path": str(path.relative_to(project_root)),
+                        "content": current,
+                        "index": chunk_index,
+                    }
+                )
+                chunk_index += 1
+            current = content
+        if current:
+            chunks.append(
+                {
+                    "path": str(path.relative_to(project_root)),
+                    "content": current,
+                    "index": chunk_index,
+                }
+            )
+    return chunks
+
+
+def tokenize_for_search(text: str) -> set[str]:
+    return {
+        token
+        for token in re.findall(r"[a-z0-9]+", text.lower())
+        if len(token) >= 2
+    }
+
+
+def expand_query_text_for_cn(text: str) -> str:
+    """
+    Keep UI/response English while allowing Chinese queries to map to
+    searchable English terms for local doc retrieval.
+    """
+    expansions = {
+        "\u53d1\u7968": "invoice",
+        "\u5e93\u5b58": "inventory stock",
+        "\u5bf9\u8d26": "reconciliation",
+        "\u672a\u5339\u914d": "unmatched",
+        "\u5339\u914d": "matched",
+        "\u4f9b\u5e94\u5546": "supplier vendor",
+        "\u516c\u53f8": "company manufacturer",
+        "\u8bca\u6240": "clinic site",
+        "\u542f\u52a8": "start run",
+        "\u5b89\u88c5": "install setup",
+        "\u62a5\u9519": "error fix troubleshooting",
+        "\u6587\u6863": "documentation readme docs",
+        "\u7cfb\u7edf": "system",
+    }
+    enriched = text
+    lowered = text.lower()
+    for cn_term, en_terms in expansions.items():
+        if cn_term in lowered:
+            enriched = f"{enriched} {en_terms}"
+    return enriched
+
+
+def retrieve_doc_chunks(question: str, search_terms: list[str], limit: int = 4) -> list[dict]:
+    query_text = " ".join(search_terms).strip() or question
+    query_text = expand_query_text_for_cn(query_text)
+    query_tokens = tokenize_for_search(query_text)
+    if not query_tokens:
+        return []
+
+    scored_chunks = []
+    for chunk in load_doc_chunks():
+        chunk_tokens = tokenize_for_search(chunk["content"])
+        overlap = query_tokens & chunk_tokens
+        if not overlap:
+            continue
+        score = len(overlap)
+        if chunk["path"].lower().endswith("readme.md"):
+            score += 1
+        scored_chunks.append((score, chunk))
+
+    scored_chunks.sort(key=lambda item: item[0], reverse=True)
+    return [chunk for _, chunk in scored_chunks[:limit]]
+
+
+def build_doc_answer_without_llm(question: str, doc_chunks: list[dict]) -> str:
+    if not doc_chunks:
+        return "I could not find enough evidence in the system documentation to answer this question."
+
+    top_chunk = doc_chunks[0]
+    snippet = re.sub(r"\s+", " ", top_chunk["content"]).strip()
+    snippet = snippet[:260].rstrip()
+    return (
+        "I found relevant information in the system documentation. "
+        f"Based on `{top_chunk['path']}`, {snippet}"
+        f"{'...' if len(top_chunk['content']) > 260 else ''}"
+    )
+
+
+def generate_doc_answer_with_llm(question: str, doc_chunks: list[dict]) -> str | None:
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key or not doc_chunks:
+        return None
+
+    model = os.getenv("CHATBOT_DOC_MODEL", os.getenv("CHATBOT_INTENT_MODEL", "gpt-4o-mini"))
+    base_url = os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1").rstrip("/")
+
+    context = "\n\n".join(
+        f"[Source: {chunk['path']}]\n{chunk['content']}"
+        for chunk in doc_chunks
+    )
+    payload = {
+        "model": model,
+        "temperature": 0.2,
+        "messages": [
+            {
+                "role": "system",
+                "content": (
+                    "You answer questions about this software system using only the provided documentation context. "
+                    "Answer in English. "
+                    "If the context is insufficient, say you cannot confirm from the documentation. "
+                    "Do not mention any information not present in the context."
+                ),
+            },
+            {
+                "role": "user",
+                "content": f"Question:\n{question}\n\nDocumentation context:\n{context}",
+            },
+        ],
+    }
+
+    try:
+        with httpx.Client(timeout=20.0) as client:
+            response = client.post(
+                f"{base_url}/chat/completions",
+                headers={
+                    "Authorization": f"Bearer {api_key}",
+                    "Content-Type": "application/json",
+                },
+                json=payload,
+            )
+            response.raise_for_status()
+            body = response.json()
+            return body["choices"][0]["message"]["content"].strip()
+    except (httpx.HTTPError, KeyError, json.JSONDecodeError):
+        return None
+
+
+def should_use_safe_nlg() -> bool:
+    raw = os.getenv("CHATBOT_SAFE_NLG_ENABLED", "false").strip().lower()
+    return raw in {"1", "true", "yes", "on"}
+
+
+def build_safe_nlg_facts(response: ChatAskResponse) -> dict:
+    """
+    Build a sanitized fact payload for answer naturalization.
+    This payload excludes raw identifiers and detailed row-level content.
+    """
+    allowed_metric_keys = {
+        "in_stock_products",
+        "total_lenses",
+        "used_lenses",
+        "matched_lenses",
+        "unmatched_lenses",
+        "total_suppliers",
+        "total_companies",
+        "total_sites",
+        "matched_invoice_rows",
+        "unmatched_invoice_rows",
+        "matched_invoice_numbers",
+        "unmatched_invoice_numbers",
+        "total_unmatched_lenses",
+        "total_unmatched_invoice_rows",
+        "exists",
+        "is_used",
+        "is_matched",
+        "item_count",
+        "unmatched_count",
+    }
+    safe_data: dict = {}
+    for key in allowed_metric_keys:
+        if key in response.data:
+            safe_data[key] = response.data[key]
+    return {
+        "intent": response.intent,
+        "route": response.route,
+        "metrics": safe_data,
+    }
+
+
+def generate_safe_natural_business_answer(
+    question: str,
+    response: ChatAskResponse,
+) -> ChatAskResponse:
+    """
+    Optional natural-language layer for business answers.
+    Only sends sanitized aggregate facts to the LLM.
+    """
+    if not should_use_safe_nlg():
+        return response
+
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        return response
+
+    safe_facts = build_safe_nlg_facts(response)
+    if not safe_facts.get("metrics"):
+        return response
+
+    model = os.getenv("CHATBOT_ANSWER_MODEL", os.getenv("CHATBOT_QUERY_PLAN_MODEL", "gpt-4o-mini"))
+    base_url = os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1").rstrip("/")
+    payload = {
+        "model": model,
+        "temperature": 0.3,
+        "messages": [
+            {
+                "role": "system",
+                "content": (
+                    "You rewrite business QA answers in natural English using only provided sanitized facts. "
+                    "Do not invent values, identifiers, names, or any missing details. "
+                    "Keep responses concise (1-2 sentences)."
+                ),
+            },
+            {
+                "role": "user",
+                "content": (
+                    f"User question: {question}\n"
+                    f"Current template answer: {response.answer}\n"
+                    f"Sanitized facts JSON: {json.dumps(safe_facts, ensure_ascii=True)}\n"
+                    "Rewrite the answer naturally."
+                ),
+            },
+        ],
+    }
+
+    try:
+        with httpx.Client(timeout=12.0) as client:
+            llm_response = client.post(
+                f"{base_url}/chat/completions",
+                headers={
+                    "Authorization": f"Bearer {api_key}",
+                    "Content-Type": "application/json",
+                },
+                json=payload,
+            )
+            llm_response.raise_for_status()
+            content = llm_response.json()["choices"][0]["message"]["content"].strip()
+            if not content:
+                return response
+            return ChatAskResponse(
+                route=response.route,
+                intent=response.intent,
+                answer=content,
+                data=response.data,
+                sources=response.sources,
+            )
+    except (httpx.HTTPError, KeyError, json.JSONDecodeError):
+        return response
+
+
+@app.post("/chat/ask", response_model=ChatAskResponse)
+def chat_ask(payload: ChatAskRequest, db: Session = Depends(get_db)):
+    question = payload.question.strip()
+    if not question:
+        raise HTTPException(status_code=400, detail="question is required")
+
+    query_plan = parse_query_plan_with_llm(question)
+    if query_plan is None:
+        intent_payload = resolve_chat_intent(question)
+        route = intent_payload.route
+        query_plan = build_query_plan_from_intent(intent_payload, question)
+        doc_search_terms = intent_payload.doc_search_terms
+    else:
+        route = query_plan.route
+        doc_search_terms = []
+    query_plan = normalize_query_plan(query_plan, question)
+
+    if route == "doc_qa":
+        doc_chunks = retrieve_doc_chunks(question, doc_search_terms)
+        if not doc_chunks:
+            return ChatAskResponse(
+                route="out_of_scope",
+                intent="unsupported",
+                answer="I could not find enough evidence in the system documentation to answer this question.",
+                data={},
+                sources=[],
+            )
+
+        answer = generate_doc_answer_with_llm(question, doc_chunks)
+        if not answer:
+            answer = build_doc_answer_without_llm(question, doc_chunks)
+
+        return ChatAskResponse(
+            route=route,
+            intent="unsupported",
+            answer=answer,
+            data={
+                "matched_documents": [
+                    {"path": chunk["path"], "chunk_index": chunk["index"]}
+                    for chunk in doc_chunks
+                ]
+            },
+            sources=[
+                ChatSource(source_type="document", source_value=chunk["path"])
+                for chunk in doc_chunks
+            ],
+        )
+
+    planned_response = execute_business_query_plan(query_plan, db, question)
+    if planned_response is not None:
+        return generate_safe_natural_business_answer(question, planned_response)
+
+    return ChatAskResponse(
+        route="out_of_scope",
+        intent="unsupported",
+        answer=(
+            "I can answer two types of questions: (1) system documentation / troubleshooting, and (2) inventory overview, "
+            "invoice details, and unmatched reconciliation summaries."
+        ),
+        data={},
+        sources=[ChatSource(source_type="system", source_value="mvp_intent_guard")],
+    )
 
 # ------------------------
 # Company

@@ -121,7 +121,7 @@ cp env.example .env
 
 ### 5.5. Start backend
 ```bash
-./start_server.sh
+bash ../scripts/run_server.sh
 ```
 
 ### 5.6. Start frontend (in a new terminal)
