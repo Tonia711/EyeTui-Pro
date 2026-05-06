@@ -32,19 +32,19 @@ export const InvoiceTable = ({
         <Table className="table-fixed w-full">
           <TableHeader>
             <TableRow className="border-b-2 border-gray-900 hover:bg-transparent">
-              <TableHead className="w-32 text-black text-xs uppercase tracking-wider font-semibold h-auto pt-4 pb-3 px-6">
+              <TableHead className="w-[11%] min-w-0 text-black text-xs uppercase tracking-wider font-semibold h-auto pt-4 pb-3 px-6 align-top whitespace-normal">
                 Upload Date
               </TableHead>
-              <TableHead className="w-48 text-black text-xs uppercase tracking-wider font-semibold h-auto pt-4 pb-3 px-6">
+              <TableHead className="w-[16%] min-w-0 text-black text-xs uppercase tracking-wider font-semibold h-auto pt-4 pb-3 px-6 align-top whitespace-normal">
                 Supplier
               </TableHead>
-              <TableHead className="w-40 text-black text-xs uppercase tracking-wider font-semibold h-auto pt-4 pb-3 px-6">
+              <TableHead className="w-[20%] min-w-0 text-black text-xs uppercase tracking-wider font-semibold h-auto pt-4 pb-3 px-6 align-top whitespace-normal">
                 Invoice Number
               </TableHead>
-              <TableHead className="text-black text-xs uppercase tracking-wider font-semibold h-auto pt-4 pb-3 px-6">
+              <TableHead className="w-[49%] min-w-0 text-black text-xs uppercase tracking-wider font-semibold h-auto pt-4 pb-3 px-6 align-top whitespace-normal">
                 Lens Serial Numbers
               </TableHead>
-              <TableHead className="w-12 text-black text-xs uppercase tracking-wider font-semibold h-auto pt-4 pb-3 pr-6 text-right"></TableHead>
+              <TableHead className="w-[4%] min-w-0 text-black text-xs uppercase tracking-wider font-semibold h-auto pt-4 pb-3 pr-6 text-right align-top"></TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -55,34 +55,32 @@ export const InvoiceTable = ({
                   className="hover:bg-gray-50 border-b border-gray-100 group"
                 >
                   <TableCell
-                    className="text-gray-600 text-sm font-bold px-6 py-4"
+                    className="text-gray-600 text-sm font-bold px-6 py-4 min-w-0 align-top whitespace-normal break-words"
                     style={{ fontFamily: "Jost, sans-serif" }}
                   >
                     {invoice.uploadDate}
                   </TableCell>
                   <TableCell
-                    className="text-gray-600 text-sm font-bold px-6 py-4"
+                    className="text-gray-600 text-sm font-bold px-6 py-4 min-w-0 align-top whitespace-normal break-words"
                     style={{ fontFamily: "Jost, sans-serif" }}
                   >
                     {invoice.supplier}
                   </TableCell>
                   <TableCell
-                    className="text-gray-600 text-sm font-bold px-6 py-4"
+                    className="text-gray-600 text-sm font-bold px-6 py-4 min-w-0 align-top whitespace-normal break-all"
                     style={{ fontFamily: "Jost, sans-serif" }}
                   >
                     {invoice.invoiceNumber}
                   </TableCell>
                   <TableCell
-                    className="px-6 py-4 text-sm font-bold whitespace-normal break-words"
+                    className="px-6 py-4 min-w-0 align-top text-sm whitespace-normal break-all [overflow-wrap:anywhere]"
                     style={{ fontFamily: "Jost, sans-serif" }}
                   >
-                    <div
-                      style={{ wordBreak: "break-word", overflowWrap: "break-word" }}
-                    >
+                    <div className="leading-relaxed">
                       {invoice.serialNumbers.map((item, idx) => (
                         <span
                           key={idx}
-                          className="font-bold"
+                          className="font-bold break-all [overflow-wrap:anywhere]"
                           style={{
                             color:
                               item.isMatched === true ? "#4B5563" : "#DC2626",
@@ -94,7 +92,7 @@ export const InvoiceTable = ({
                       ))}
                     </div>
                   </TableCell>
-                  <TableCell className="pr-6 py-4 text-right">
+                  <TableCell className="pr-6 py-4 text-right align-top whitespace-nowrap">
                     <button
                       onClick={() => {
                         onDelete(invoice.invoiceNumber);

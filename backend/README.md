@@ -111,6 +111,9 @@ OPENAI_API_KEY=your_key_here
 # CHATBOT_QUERY_PLAN_MODEL=gpt-4o-mini
 # CHATBOT_SAFE_NLG_ENABLED=true
 # CHATBOT_ANSWER_MODEL=gpt-4o-mini
+# CHATBOT_DOC_EMBEDDING_ENABLED=true
+# CHATBOT_DOC_EMBEDDING_MODEL=text-embedding-3-small
+# CHATBOT_DOC_EMBED_CACHE_PATH=backend/.rag/doc_embeddings_cache.json
 ```
 
 Safe NLG notes:

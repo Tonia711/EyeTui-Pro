@@ -5,6 +5,8 @@ from sqlalchemy import select, func
 import os
 import re
 import json
+import hashlib
+import math
 import httpx
 from pydantic import ValidationError
 from pathlib import Path
@@ -300,14 +302,37 @@ def classify_chat_intent(question: str) -> str:
     inventory_keywords = ["inventory", "stock", "\u5e93\u5b58"]
     serial_keywords = ["serial", "serial number", "sn", "\u5e8f\u5217\u53f7"]
     product_keywords = ["product", "item", "\u4ea7\u54c1"]
+    lens_keywords = ["lens", "\u93e3\u7247", "\u93e3\u7247\u4ea7\u54c1", "\u93e3\u7247\u5546\u54c1", "\u93e3\u7247\u5b57\u7b26", "\u93e3\u7247\u4f4d\u5143"]
+    used_keywords = [
+        "used",
+        "consumed",
+        "\u5df2\u4f7f\u7528",
+        "\u5df2\u4f7f\u7528\u7684",
+        "\u5df2\u7528",
+        "\u5df2\u7528\u7684",
+        "\u5df2\u7528\u7684\u93e3\u7247",
+        "\u5df2\u7528\u93e3\u7247",
+        "\u5df2\u6d3b\u7528",
+        "\u6d88\u8017",
+        "\u6d88\u8017\u7684",
+        "\u6d88\u8017\u7684\u93e3\u7247",
+        "\u5f02\u5e38\u5df2\u4f7f\u7528",
+        "\u5f02\u5e38\u6d88\u8017",
+    ]
     unmatched_keywords = [
         "unmatched",
         "not matched",
         "reconciliation",
         "mismatch",
+        "problem",
+        "issue",
+        "abnormal",
         "\u5bf9\u8d26",
         "\u672a\u5339\u914d",
         "\u5339\u914d",
+        "\u95ee\u9898",
+        "\u6709\u95ee\u9898",
+        "\u5f02\u5e38",
     ]
     supplier_keywords = [
         "supplier",
@@ -335,10 +360,20 @@ def classify_chat_intent(question: str) -> str:
             return "invoice_detail"
         # Default serial lookup favors product existence in inventory.
         return "inventory_item_lookup"
-    if any(k in text for k in invoice_keywords):
-        return "invoice_detail"
     if any(k in text for k in unmatched_keywords):
         return "unmatched_summary"
+    if ("\u95ee\u9898" in text or "\u5f02\u5e38" in text or "issue" in text or "problem" in text) and any(
+        k in text for k in ["\u53d1\u7968", "invoice", "\u5bf9\u8d26", "reconciliation"]
+    ):
+        return "unmatched_summary"
+    if any(k in text for k in invoice_keywords):
+        return "invoice_detail"
+    if any(k in text for k in used_keywords) and any(
+        k in text for k in (lens_keywords + product_keywords)
+    ):
+        # Count used lenses: route to inventory overview, then focus parsing
+        # will compute used number.
+        return "inventory_overview"
     if any(k in text for k in supplier_keywords):
         return "supplier_overview"
     if any(k in text for k in company_keywords):
@@ -352,6 +387,8 @@ def classify_chat_intent(question: str) -> str:
 
 def classify_chat_route(question: str) -> str:
     text = question.lower()
+    if is_general_out_of_scope_question(question):
+        return "out_of_scope"
     business_intent = classify_chat_intent(question)
     if business_intent != "unsupported":
         return "business_qa"
@@ -387,6 +424,115 @@ def classify_chat_route(question: str) -> str:
     if any(keyword in text for keyword in doc_keywords):
         return "doc_qa"
     return "out_of_scope"
+
+
+def is_general_out_of_scope_question(question: str) -> bool:
+    """
+    Hard guard for clearly non-system, general-world questions.
+    Prevents doc_qa from answering unrelated topics such as weather/news.
+    """
+    text = question.lower()
+    unrelated_markers = [
+        # English
+        "weather",
+        "temperature",
+        "forecast",
+        "rain",
+        "stock price",
+        "bitcoin",
+        "news",
+        "sports",
+        "movie",
+        "recipe",
+        "travel",
+        "translate",
+        "joke",
+        # Chinese
+        "天气",
+        "气温",
+        "下雨",
+        "预报",
+        "新闻",
+        "股价",
+        "比特币",
+        "电影",
+        "菜谱",
+        "旅游",
+        "翻译",
+        "笑话",
+    ]
+    return any(marker in text for marker in unrelated_markers)
+
+
+def prefers_english(question: str) -> bool:
+    """
+    Heuristic: if the user question contains mostly ASCII letters and no CJK,
+    prefer English responses for template fallbacks.
+    """
+    if not question:
+        return False
+    has_cjk = any("\u4e00" <= ch <= "\u9fff" for ch in question)
+    if has_cjk:
+        return False
+    letters = sum(1 for ch in question if ("a" <= ch.lower() <= "z"))
+    return letters >= 4
+
+
+def asks_used_lens_count(question: str) -> bool:
+    text = question.lower()
+    if not any(k in text for k in ["how many", "count", "number of", "多少"]):
+        return False
+    used_markers = ["used", "consumed", "\u5df2\u4f7f\u7528", "\u5df2\u7528", "\u6d88\u8017", "\u5df2\u6d3b\u7528"]
+    lens_markers = ["lens", "\u93e3\u7247"]
+    return any(m in text for m in used_markers) and any(m in text for m in lens_markers)
+
+
+def extract_company_name_for_lens(question: str) -> str | None:
+    """
+    Extract a company/manufacturer name from patterns like:
+      - \u6709\u591a\u5c11 lens \u6765\u81ea Alcon \u516c\u53f8\u7684
+      - how many lenses from Alcon company
+    """
+    # Chinese "来自 XXX 公司" / "来自 XXX 的公司"
+    m = re.search(r"\u6765\u81ea\s*([A-Za-z0-9\-_]+)\s*(?:\u516c\u53f8|\u5382\u5546|\u4f9b\u5e94\u5546)", question)
+    if m:
+        return m.group(1).strip()
+    # Chinese "from XXX company" (rare)
+    m = re.search(r"from\s*([A-Za-z0-9\-_]+)\s*(?:company|supplier|vendor)", question, flags=re.IGNORECASE)
+    if m:
+        return m.group(1).strip()
+    return None
+
+
+def asks_lens_count_from_company(question: str) -> bool:
+    text = question.lower()
+    if not any(k in text for k in ["how many", "count", "number of", "多少"]):
+        return False
+    if not any(k in text for k in ["lens", "\u93e3\u7247"]):
+        return False
+    if not any(k in text for k in ["\u6765\u81ea", "from"]):
+        return False
+    if not any(k in text for k in ["\u516c\u53f8", "company", "\u5382\u5546", "supplier", "vendor", "\u4f99\u5e94\u5546"]):
+        # Keep it strict: avoid matching the plain "number of companies"
+        return False
+    return True
+
+
+def detect_company_lens_focus(question: str) -> str:
+    """
+    Focus for company-lens count queries.
+    Returns one of: all, in_stock, used, matched, unmatched.
+    """
+    text = question.lower()
+    if any(k in text for k in ["in stock", "stock", "inventory", "在库", "库存"]):
+        return "in_stock"
+    if any(k in text for k in ["used", "已使用", "已用", "consumed", "消耗"]):
+        return "used"
+    if any(k in text for k in ["unmatched", "not matched", "未匹配"]):
+        return "unmatched"
+    if any(k in text for k in ["matched", "已匹配", "匹配"]):
+        return "matched"
+    return "all"
 
 
 def extract_invoice_number(question: str) -> str | None:
@@ -429,6 +575,62 @@ def detect_inventory_focus(question: str) -> str:
     if any(k in text for k in ["in stock", "stock", "inventory", "\u5e93\u5b58", "\u5728\u5e93"]):
         return "in_stock"
     return "overview"
+
+
+def asks_invoice_count_question(question: str) -> bool:
+    text = question.lower()
+    invoice_markers = ["invoice", "\u53d1\u7968"]
+    count_markers = [
+        "how many",
+        "count",
+        "number of",
+        "\u591a\u5c11",
+        "\u51e0\u4e2a",
+        "\u6570\u91cf",
+        "\u603b\u6570",
+    ]
+    detail_markers = ["which", "detail", "\u8be6\u60c5", "\u54ea\u4e2a", "\u54ea\u4e9b", "\u5217\u51fa"]
+    return (
+        any(k in text for k in invoice_markers)
+        and any(k in text for k in count_markers)
+        and not any(k in text for k in detail_markers)
+    )
+
+
+def asks_for_problem_invoice_list(question: str) -> bool:
+    """
+    Detect whether user asks for problematic invoice examples/list.
+    """
+    text = question.lower()
+    list_markers = [
+        "which",
+        "what",
+        "list",
+        "show",
+        "\u5177\u4f53",
+        "\u54ea\u4e9b",
+        "\u54ea\u4e2a",
+        "\u5217\u51fa",
+    ]
+    problem_markers = [
+        "problem",
+        "issue",
+        "abnormal",
+        "unmatched",
+        "mismatch",
+        "not matched",
+        "\u6709\u95ee\u9898",
+        "\u95ee\u9898",
+        "\u5f02\u5e38",
+        "\u672a\u5339\u914d",
+        "\u5bf9\u8d26",
+    ]
+    invoice_markers = ["invoice", "\u53d1\u7968"]
+    return (
+        any(k in text for k in invoice_markers)
+        and any(k in text for k in problem_markers)
+        and any(k in text for k in list_markers)
+    )
 
 
 def parse_intent_with_llm(question: str) -> ChatIntentPayload | None:
@@ -550,6 +752,9 @@ def build_query_plan_from_intent(payload: ChatIntentPayload, question: str) -> C
     if payload.route != "business_qa":
         return ChatQueryPlan(route=payload.route)
 
+    if asks_invoice_count_question(question):
+        return ChatQueryPlan(route="business_qa", entity="invoice", operation="count")
+
     intent = payload.intent or "unsupported"
     serial_in_question = extract_invoice_number(question) if is_serial_lookup_question(question) else None
 
@@ -641,6 +846,25 @@ def execute_business_query_plan(plan: ChatQueryPlan, db: Session, question: str)
             answer=f"There are {total_sites} sites in the system.",
             data={"total_sites": total_sites},
             sources=[ChatSource(source_type="table", source_value="site")],
+        )
+
+    if plan.entity == "invoice" and plan.operation == "count":
+        total_invoice_rows = db.execute(select(func.count(Invoice.id))).scalar_one()
+        total_invoice_numbers = db.execute(
+            select(func.count(func.distinct(Invoice.invoice_number)))
+        ).scalar_one()
+        return ChatAskResponse(
+            route="business_qa",
+            intent=plan_intent,
+            answer=(
+                f"There are {total_invoice_numbers} invoice numbers in the system "
+                f"({total_invoice_rows} invoice rows in total)."
+            ),
+            data={
+                "total_invoice_numbers": total_invoice_numbers,
+                "total_invoice_rows": total_invoice_rows,
+            },
+            sources=[ChatSource(source_type="table", source_value="invoice")],
         )
 
     if plan.entity == "lens" and plan.operation == "exists":
@@ -828,22 +1052,23 @@ def execute_business_query_plan(plan: ChatQueryPlan, db: Session, question: str)
         if focus == "used":
             answer = (
                 f"There are currently {used} used products. "
-                f"For context: {in_stock} in stock, {matched} matched, {unmatched} unmatched."
+                f"Inventory view: {in_stock} in stock, {total} total."
             )
         elif focus == "matched":
             answer = (
                 f"There are currently {matched} matched products. "
-                f"For context: {in_stock} in stock, {used} used, {unmatched} unmatched."
+                f"Inventory view: {in_stock} in stock, {used} used, {total} total."
             )
         elif focus == "unmatched":
             answer = (
                 f"There are currently {unmatched} unmatched products. "
-                f"For context: {in_stock} in stock, {used} used, {matched} matched."
+                f"Inventory view: {in_stock} in stock, {used} used, {total} total."
             )
         else:
             answer = (
                 f"There are currently {in_stock} products in stock. "
-                f"Across all records: {total} total, {used} used, {matched} matched, {unmatched} unmatched."
+                f"Across all records: {total} total, {used} used. "
+                f"Reconciliation status: {matched} matched, {unmatched} unmatched."
             )
         return ChatAskResponse(
             route="business_qa",
@@ -875,6 +1100,14 @@ def execute_business_query_plan(plan: ChatQueryPlan, db: Session, question: str)
             .order_by(Invoice.id.desc())
             .limit(10)
         ).all()
+        unmatched_invoice_number_rows = db.execute(
+            select(Invoice.invoice_number)
+            .select_from(Invoice)
+            .join(Lens, Invoice.serial_number == Lens.serial_number, isouter=True)
+            .where((Lens.id.is_(None)) | (Lens.is_matched.is_(False)))
+            .group_by(Invoice.invoice_number)
+            .order_by(func.max(Invoice.id).desc())
+        ).all()
         total_unmatched_lens = db.execute(select(func.count(Lens.id)).where(Lens.is_matched.is_(False))).scalar_one()
         total_unmatched_invoice_rows = db.execute(
             select(func.count(Invoice.id))
@@ -882,13 +1115,30 @@ def execute_business_query_plan(plan: ChatQueryPlan, db: Session, question: str)
             .join(Lens, Invoice.serial_number == Lens.serial_number, isouter=True)
             .where((Lens.id.is_(None)) | (Lens.is_matched.is_(False)))
         ).scalar_one()
+        sample_unmatched_invoice_numbers = [
+            row.invoice_number
+            for row in unmatched_invoice_number_rows
+            if row.invoice_number
+        ]
+        if asks_for_problem_invoice_list(question):
+            if sample_unmatched_invoice_numbers:
+                preview = ", ".join(sample_unmatched_invoice_numbers)
+                answer = (
+                    f"Problematic invoice numbers: {preview}. "
+                    f"Total unmatched invoice rows: {total_unmatched_invoice_rows}."
+                )
+            else:
+                answer = f"No problematic invoices found. Unmatched invoice rows: {total_unmatched_invoice_rows}."
+        else:
+            answer = f"Unmatched lenses: {total_unmatched_lens}. Unmatched invoice rows: {total_unmatched_invoice_rows}."
         return ChatAskResponse(
             route="business_qa",
             intent=plan_intent,
-            answer=f"Unmatched lenses: {total_unmatched_lens}. Unmatched invoice rows: {total_unmatched_invoice_rows}.",
+            answer=answer,
             data={
                 "total_unmatched_lenses": total_unmatched_lens,
                 "total_unmatched_invoice_rows": total_unmatched_invoice_rows,
+                "sample_unmatched_invoice_numbers": sample_unmatched_invoice_numbers,
                 "sample_unmatched_lens_serial_numbers": [r.serial_number for r in unmatched_lens_rows],
                 "sample_unmatched_invoice_rows": [
                     {"invoice_number": r.invoice_number, "serial_number": r.serial_number}
@@ -972,6 +1222,12 @@ def expand_query_text_for_cn(text: str) -> str:
         "\u5bf9\u8d26": "reconciliation",
         "\u672a\u5339\u914d": "unmatched",
         "\u5339\u914d": "matched",
+        "\u63a5\u6536": "receive receiving intake upload scan",
+        "\u63a5\u6536lens": "lens receiving intake upload scan",
+        "\u955c\u7247": "lens iol product",
+        "\u600e\u4e48": "how steps guide",
+        "\u5982\u4f55": "how steps guide",
+        "\u6b65\u9aa4": "steps guide workflow",
         "\u4f9b\u5e94\u5546": "supplier vendor",
         "\u516c\u53f8": "company manufacturer",
         "\u8bca\u6240": "clinic site",
@@ -992,19 +1248,198 @@ def expand_query_text_for_cn(text: str) -> str:
 def retrieve_doc_chunks(question: str, search_terms: list[str], limit: int = 4) -> list[dict]:
     query_text = " ".join(search_terms).strip() or question
     query_text = expand_query_text_for_cn(query_text)
+
+    # 1) semantic retrieval first (embedding-based), if configured
+    semantic_chunks = retrieve_doc_chunks_by_embedding(query_text, limit=max(limit, 8))
+
+    # 2) lexical retrieval as stable fallback
+    lexical_chunks = retrieve_doc_chunks_by_keyword(query_text, limit=max(limit, 8))
+
+    # 3) merge while preserving ranking priority (semantic first)
+    merged: list[dict] = []
+    seen: set[tuple[str, int]] = set()
+    for chunk in semantic_chunks + lexical_chunks:
+        key = (chunk["path"], chunk["index"])
+        if key in seen:
+            continue
+        seen.add(key)
+        merged.append(chunk)
+        if len(merged) >= limit:
+            break
+    return merged
+
+
+def should_use_doc_embeddings() -> bool:
+    raw = os.getenv("CHATBOT_DOC_EMBEDDING_ENABLED", "true").strip().lower()
+    return raw in {"1", "true", "yes", "on"}
+
+
+def get_doc_embedding_model() -> str:
+    return os.getenv("CHATBOT_DOC_EMBEDDING_MODEL", "text-embedding-3-small").strip()
+
+
+def get_doc_embedding_cache_path() -> Path:
+    project_root = Path(__file__).resolve().parents[2]
+    default_path = project_root / "backend" / ".rag" / "doc_embeddings_cache.json"
+    configured = os.getenv("CHATBOT_DOC_EMBED_CACHE_PATH", "").strip()
+    return Path(configured) if configured else default_path
+
+
+def build_doc_corpus_fingerprint(chunks: list[dict], model: str) -> str:
+    digest = hashlib.sha256()
+    digest.update(model.encode("utf-8"))
+    for chunk in chunks:
+        digest.update(chunk["path"].encode("utf-8"))
+        digest.update(str(chunk["index"]).encode("utf-8"))
+        digest.update(chunk["content"].encode("utf-8"))
+    return digest.hexdigest()
+
+
+def embed_texts_with_openai(texts: list[str], model: str) -> list[list[float]] | None:
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key or not texts:
+        return None
+    base_url = os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1").rstrip("/")
+    payload = {"model": model, "input": texts}
+    try:
+        with httpx.Client(timeout=30.0) as client:
+            response = client.post(
+                f"{base_url}/embeddings",
+                headers={
+                    "Authorization": f"Bearer {api_key}",
+                    "Content-Type": "application/json",
+                },
+                json=payload,
+            )
+            response.raise_for_status()
+            data = response.json().get("data", [])
+            vectors = [item["embedding"] for item in data]
+            if len(vectors) != len(texts):
+                return None
+            return vectors
+    except (httpx.HTTPError, KeyError, TypeError, ValueError, json.JSONDecodeError):
+        return None
+
+
+@lru_cache(maxsize=1)
+def load_doc_vector_index() -> dict | None:
+    if not should_use_doc_embeddings():
+        return None
+    if not os.getenv("OPENAI_API_KEY"):
+        return None
+
+    chunks = load_doc_chunks()
+    if not chunks:
+        return None
+
+    model = get_doc_embedding_model()
+    fingerprint = build_doc_corpus_fingerprint(chunks, model)
+    cache_path = get_doc_embedding_cache_path()
+
+    cached_vectors: list[list[float]] | None = None
+    if cache_path.exists():
+        try:
+            cached = json.loads(cache_path.read_text(encoding="utf-8"))
+            if (
+                cached.get("fingerprint") == fingerprint
+                and cached.get("model") == model
+                and isinstance(cached.get("vectors"), list)
+                and len(cached.get("vectors", [])) == len(chunks)
+            ):
+                cached_vectors = cached["vectors"]
+        except (OSError, json.JSONDecodeError, TypeError, ValueError):
+            cached_vectors = None
+
+    if cached_vectors is None:
+        texts = [expand_query_text_for_cn(chunk["content"]) for chunk in chunks]
+        embedded = embed_texts_with_openai(texts, model)
+        if not embedded:
+            return None
+        cached_vectors = embedded
+        try:
+            cache_path.parent.mkdir(parents=True, exist_ok=True)
+            cache_path.write_text(
+                json.dumps(
+                    {
+                        "fingerprint": fingerprint,
+                        "model": model,
+                        "vectors": cached_vectors,
+                    },
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+        except OSError:
+            # Cache write failure should not break retrieval.
+            pass
+
+    return {"chunks": chunks, "vectors": cached_vectors, "model": model}
+
+
+def cosine_similarity(vec_a: list[float], vec_b: list[float]) -> float:
+    if not vec_a or not vec_b or len(vec_a) != len(vec_b):
+        return -1.0
+    dot = 0.0
+    norm_a = 0.0
+    norm_b = 0.0
+    for a, b in zip(vec_a, vec_b):
+        dot += a * b
+        norm_a += a * a
+        norm_b += b * b
+    denom = math.sqrt(norm_a) * math.sqrt(norm_b)
+    if denom <= 0:
+        return -1.0
+    return dot / denom
+
+
+def retrieve_doc_chunks_by_embedding(query_text: str, limit: int = 8) -> list[dict]:
+    index = load_doc_vector_index()
+    if index is None:
+        return []
+
+    query_vectors = embed_texts_with_openai([query_text], index["model"])
+    if not query_vectors:
+        return []
+
+    query_vec = query_vectors[0]
+    scored: list[tuple[float, dict]] = []
+    for chunk, vec in zip(index["chunks"], index["vectors"]):
+        score = cosine_similarity(query_vec, vec)
+        if score <= 0:
+            continue
+        scored.append((score, chunk))
+
+    scored.sort(key=lambda item: item[0], reverse=True)
+    return [chunk for _, chunk in scored[:limit]]
+
+
+def retrieve_doc_chunks_by_keyword(query_text: str, limit: int = 8) -> list[dict]:
     query_tokens = tokenize_for_search(query_text)
     if not query_tokens:
         return []
 
-    scored_chunks = []
+    query_lower = query_text.lower()
+    asks_how = any(k in query_lower for k in ["how", "steps", "guide", "workflow", "\u5982\u4f55", "\u600e\u4e48", "\u6b65\u9aa4"])
+    asks_receive = any(k in query_lower for k in ["receive", "receiving", "scan", "upload", "intake", "\u63a5\u6536"])
+
+    scored_chunks: list[tuple[int, dict]] = []
     for chunk in load_doc_chunks():
+        content_lower = chunk["content"].lower()
+        path_lower = chunk["path"].lower()
         chunk_tokens = tokenize_for_search(chunk["content"])
         overlap = query_tokens & chunk_tokens
         if not overlap:
             continue
         score = len(overlap)
-        if chunk["path"].lower().endswith("readme.md"):
+        if path_lower.endswith("readme.md"):
             score += 1
+        # Prefer user-guidance documents for "how to" questions.
+        if asks_how and ("onboarding" in path_lower or "quick_tasks" in path_lower):
+            score += 6
+        if asks_receive and any(k in content_lower for k in ["receive", "receiving", "scan", "upload"]):
+            score += 4
+        if asks_receive and ("onboarding" in path_lower or "quick_tasks" in path_lower):
+            score += 4
         scored_chunks.append((score, chunk))
 
     scored_chunks.sort(key=lambda item: item[0], reverse=True)
@@ -1015,14 +1450,93 @@ def build_doc_answer_without_llm(question: str, doc_chunks: list[dict]) -> str:
     if not doc_chunks:
         return "I could not find enough evidence in the system documentation to answer this question."
 
-    top_chunk = doc_chunks[0]
-    snippet = re.sub(r"\s+", " ", top_chunk["content"]).strip()
-    snippet = snippet[:260].rstrip()
-    return (
-        "I found relevant information in the system documentation. "
-        f"Based on `{top_chunk['path']}`, {snippet}"
-        f"{'...' if len(top_chunk['content']) > 260 else ''}"
-    )
+    question_lower = question.lower()
+    asks_how = any(k in question_lower for k in ["how", "steps", "guide", "workflow", "如何", "怎么", "步骤"])
+    asks_receive = any(k in question_lower for k in ["receive", "receiving", "lens receiving", "接收", "镜片"])
+    asks_onboarding = any(k in question_lower for k in ["new user", "onboarding", "start using", "开始使用", "新用户"])
+    asks_system_usage = any(k in question_lower for k in ["系统怎么使用", "如何使用系统", "怎么使用系统", "system usage", "how to use the system"])
+    use_en = prefers_english(question)
+
+    # Task-oriented fallback templates for common onboarding questions.
+    if asks_how and asks_receive:
+        if use_en:
+            return (
+                "Recommended steps to receive lenses:\n"
+                "1) Open the Lens Receiving page.\n"
+                "2) Select the correct clinic/site.\n"
+                "3) Scan barcodes or upload an Excel file to record serial numbers.\n"
+                "4) Review and confirm the save was successful.\n"
+                "5) If recognition fails, use Learning Mode or add missing company/lens type in Settings first."
+            )
+        return (
+            "接收镜片的推荐步骤是："
+            "1) 打开 Lens Receiving 页面；"
+            "2) 先选择正确的 clinic/site；"
+            "3) 使用扫码或 Excel 上传录入 serial number；"
+            "4) 检查并确认保存成功；"
+            "5) 若识别失败，使用 Learning Mode 或先在 Settings 补充 company/lens type。"
+        )
+    if asks_how and (asks_onboarding or asks_system_usage):
+        if use_en:
+            return (
+                "A good onboarding order for new users:\n"
+                "1) In Settings, check and complete supplier/company/lens type/site.\n"
+                "2) Use Lens Receiving to register newly arrived lenses.\n"
+                "3) Use Lens Usage & Invoice Reconciliation to upload usage records and invoices, then reconcile.\n"
+                "4) Use Invoice List and Lens Inventory to review unmatched items and inventory status."
+            )
+        return (
+            "新用户建议按这个顺序开始："
+            "1) 先在 Settings 检查并补齐 supplier/company/lens type/site；"
+            "2) 到 Lens Receiving 录入新到镜片；"
+            "3) 到 Lens Usage & Invoice Reconciliation 上传使用记录和发票并对账；"
+            "4) 在 Invoice List 和 Lens Inventory 复核未匹配项与库存状态。"
+        )
+
+    query_tokens = tokenize_for_search(expand_query_text_for_cn(question))
+    selected_lines: list[str] = []
+    for chunk in doc_chunks:
+        for raw_line in chunk["content"].splitlines():
+            line = raw_line.strip()
+            if not line:
+                continue
+            # Skip markdown headings and list titles; they are often not actionable.
+            if line.startswith("#") or line.lower().startswith("task:"):
+                continue
+            if len(line) < 20:
+                continue
+            line_tokens = tokenize_for_search(line)
+            if query_tokens and not (query_tokens & line_tokens):
+                continue
+            # Prefer actionable instructions over high-level descriptions.
+            action_markers = [
+                "open", "go to", "select", "upload", "scan", "check", "verify",
+                "save", "add", "retry", "打开", "进入", "选择", "上传", "扫码", "检查", "确认", "保存", "新增",
+            ]
+            if asks_how and not any(marker in line.lower() for marker in action_markers):
+                continue
+            cleaned = re.sub(r"[*_`#>\[\]\(\)]", "", line).strip()
+            cleaned = re.sub(r"\s{2,}", " ", cleaned)
+            if not cleaned:
+                continue
+            if cleaned not in selected_lines:
+                selected_lines.append(cleaned)
+            if len(selected_lines) >= 3:
+                break
+        if len(selected_lines) >= 3:
+            break
+
+    if not selected_lines:
+        top_chunk = doc_chunks[0]
+        snippet = re.sub(r"\s+", " ", top_chunk["content"]).strip()[:260].rstrip()
+        return (
+            "I found relevant information in the system documentation. "
+            f"Based on `{top_chunk['path']}`, {snippet}"
+            f"{'...' if len(top_chunk['content']) > 260 else ''}"
+        )
+
+    steps = " ".join(f"{idx + 1}) {line}" for idx, line in enumerate(selected_lines))
+    return f"Based on system documentation, here are the key steps: {steps}"
 
 
 def generate_doc_answer_with_llm(question: str, doc_chunks: list[dict]) -> str | None:
@@ -1191,6 +1705,94 @@ def chat_ask(payload: ChatAskRequest, db: Session = Depends(get_db)):
     question = payload.question.strip()
     if not question:
         raise HTTPException(status_code=400, detail="question is required")
+    if is_general_out_of_scope_question(question):
+        use_en = prefers_english(question)
+        return ChatAskResponse(
+            route="out_of_scope",
+            intent="unsupported",
+            answer=(
+                (
+                    "This question is outside the assistant's scope. "
+                    "I can help with system usage, inventory, invoices, and reconciliation."
+                )
+                if use_en
+                else (
+                    "这个问题不在当前系统助手支持范围内。"
+                    "我可以帮助你处理系统使用、库存、发票和对账相关问题。"
+                )
+            ),
+            data={},
+            sources=[ChatSource(source_type="system", source_value="scope_guard")],
+        )
+
+    # Hard business guards for two frequent queries.
+    # This bypasses LLM routing/planning to avoid "intent guard" fallbacks.
+    if asks_used_lens_count(question):
+        used_total = db.execute(
+            select(func.count(Lens.id)).where(Lens.is_used.is_(True))
+        ).scalar_one()
+        use_en = prefers_english(question)
+        return ChatAskResponse(
+            route="business_qa",
+            intent="inventory_overview",
+            answer=(
+                f"目前已使用的 lens 数量是：{used_total}。" if not use_en else
+                f"There are {used_total} used lenses."
+            ),
+            data={"used_lenses": used_total},
+            sources=[ChatSource(source_type="table", source_value="lens")],
+        )
+
+    if asks_lens_count_from_company(question):
+        company_name = extract_company_name_for_lens(question)
+        use_en = prefers_english(question)
+        if company_name:
+            focus = detect_company_lens_focus(question)
+            stmt = (
+                select(func.count(Lens.id))
+                .select_from(Lens)
+                .join(LensType, Lens.type_id == LensType.id)
+                .join(Company, LensType.company_id == Company.id)
+                .where(func.lower(Company.name).like(f"%{company_name.lower()}%"))
+            )
+            if focus == "in_stock":
+                stmt = stmt.where(Lens.is_used.is_(False))
+            elif focus == "used":
+                stmt = stmt.where(Lens.is_used.is_(True))
+            elif focus == "matched":
+                stmt = stmt.where(Lens.is_matched.is_(True))
+            elif focus == "unmatched":
+                stmt = stmt.where(Lens.is_matched.is_(False))
+            lens_total = db.execute(stmt).scalar_one()
+            cn_focus_text = {
+                "all": "来源的 lens 数量",
+                "in_stock": "来源且在库的 lens 数量",
+                "used": "来源且已使用的 lens 数量",
+                "matched": "来源且已匹配的 lens 数量",
+                "unmatched": "来源且未匹配的 lens 数量",
+            }[focus]
+            en_focus_text = {
+                "all": f"lenses from {company_name}",
+                "in_stock": f"in-stock lenses from {company_name}",
+                "used": f"used lenses from {company_name}",
+                "matched": f"matched lenses from {company_name}",
+                "unmatched": f"unmatched lenses from {company_name}",
+            }[focus]
+            return ChatAskResponse(
+                route="business_qa",
+                intent="lens_company_lens_count",
+                answer=(
+                    f"{company_name} 公司{cn_focus_text}是：{lens_total}。"
+                    if not use_en
+                    else f"There are {lens_total} {en_focus_text}."
+                ),
+                data={
+                    "company_name": company_name,
+                    "focus": focus,
+                    "lenses_from_company": lens_total,
+                },
+                sources=[ChatSource(source_type="table", source_value="lens")],
+            )
 
     query_plan = parse_query_plan_with_llm(question)
     if query_plan is None:
@@ -1202,6 +1804,16 @@ def chat_ask(payload: ChatAskRequest, db: Session = Depends(get_db)):
         route = query_plan.route
         doc_search_terms = []
     query_plan = normalize_query_plan(query_plan, question)
+
+    # Guard: if LLM returned a business_qa plan but it's missing required fields,
+    # fall back to rule-based intent resolution.
+    if (
+        query_plan.route == "business_qa"
+        and (not query_plan.entity or not query_plan.operation)
+    ):
+        intent_payload = resolve_chat_intent(question)
+        route = intent_payload.route
+        query_plan = build_query_plan_from_intent(intent_payload, question)
 
     if route == "doc_qa":
         doc_chunks = retrieve_doc_chunks(question, doc_search_terms)
@@ -1229,14 +1841,24 @@ def chat_ask(payload: ChatAskRequest, db: Session = Depends(get_db)):
                 ]
             },
             sources=[
-                ChatSource(source_type="document", source_value=chunk["path"])
-                for chunk in doc_chunks
+                ChatSource(source_type="document", source_value=path)
+                for path in list(dict.fromkeys(chunk["path"] for chunk in doc_chunks))
             ],
         )
 
     planned_response = execute_business_query_plan(query_plan, db, question)
     if planned_response is not None:
         return generate_safe_natural_business_answer(question, planned_response)
+
+    # If business plan execution failed, try rule-based fallback.
+    if query_plan.route == "business_qa":
+        intent_payload = resolve_chat_intent(question)
+        route = intent_payload.route
+        query_plan2 = build_query_plan_from_intent(intent_payload, question)
+        query_plan2 = normalize_query_plan(query_plan2, question)
+        planned_response2 = execute_business_query_plan(query_plan2, db, question)
+        if planned_response2 is not None:
+            return generate_safe_natural_business_answer(question, planned_response2)
 
     return ChatAskResponse(
         route="out_of_scope",
